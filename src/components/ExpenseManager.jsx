@@ -270,7 +270,7 @@ const ExpenseManager = ({ onUpdate }) => {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog
+<Dialog
   open={deleteConfirmOpen}
   onClose={() => {
     setDeleteConfirmOpen(false);
@@ -279,19 +279,33 @@ const ExpenseManager = ({ onUpdate }) => {
 >
   <DialogTitle>Confirm Delete</DialogTitle>
   <DialogContent>
-    <DialogContentText>
-      Are you sure you want to delete this expense?
+    <div className="space-y-4">
+      <DialogContentText>
+        Are you sure you want to delete this expense?
+      </DialogContentText>
       {expenseToDelete && (
-        <div className="mt-3 p-3 bg-gray-50 rounded">
-          <div>Amount: {formatCurrency(expenseToDelete.amount)}</div>
-          <div>Category: {expenseToDelete.category}</div>
-          <div>Date: {new Date(expenseToDelete.date).toLocaleDateString()}</div>
+        <div className="mt-3 p-3 bg-gray-50 rounded space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="font-medium">Amount:</span>
+            <span>{formatCurrency(expenseToDelete.amount)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="font-medium">Category:</span>
+            <span>{expenseToDelete.category}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="font-medium">Date:</span>
+            <span>{new Date(expenseToDelete.date).toLocaleDateString()}</span>
+          </div>
           {expenseToDelete.description && (
-            <div>Description: {expenseToDelete.description}</div>
+            <div className="flex justify-between">
+              <span className="font-medium">Description:</span>
+              <span>{expenseToDelete.description}</span>
+            </div>
           )}
         </div>
       )}
-    </DialogContentText>
+    </div>
   </DialogContent>
   <DialogActions>
     <Button 
