@@ -2,11 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Button, TextField, MenuItem, Dialog, DialogTitle,
   DialogContent, DialogActions, Alert, IconButton,
-  Tooltip, DialogContentText
+  Tooltip, DialogContentText,
+  Table, TableBody, TableCell, TableContainer, 
+  TableHead, TableRow, Paper
 } from '@mui/material';
 import { Plus, Edit2, Trash2, Save } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getFirestore, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { v4 as uuidv4 } from 'uuid';
 
 const ExpenseManager = ({ onUpdate }) => {
   const { user } = useAuth();
@@ -20,6 +23,7 @@ const ExpenseManager = ({ onUpdate }) => {
   const [editAmount, setEditAmount] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState(null);
+  const [success, setSuccess] = useState(null);
   
   const [newExpense, setNewExpense] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -34,10 +38,21 @@ const ExpenseManager = ({ onUpdate }) => {
     'Housing',
     'Utilities',
     'Entertainment',
-    'Shopping',
     'Healthcare',
+    'Shopping',
     'Other'
   ];
+
+  // Deduplication function
+  const deduplicateExpenses = (expenseList) => {
+    const seen = new Map();
+    return expenseList.filter(expense => {
+      if (!expense || !expense.id) return false;
+      if (seen.has(expense.id)) return false;
+      seen.set(expense.id, true);
+      return true;
+    });
+  };
 
   useEffect(() => {
     if (user?.uid) {
@@ -53,8 +68,13 @@ const ExpenseManager = ({ onUpdate }) => {
       if (docSnap.exists()) {
         const userData = docSnap.data();
         if (userData.expenses) {
-          setExpenses(userData.expenses);
-          onUpdate(userData.expenses);
+          const processedExpenses = userData.expenses.map(expense => ({
+            ...expense,
+            id: expense.id || uuidv4()
+          }));
+          const uniqueExpenses = deduplicateExpenses(processedExpenses);
+          setExpenses(uniqueExpenses);
+          onUpdate(uniqueExpenses);
         }
       } else {
         await setDoc(userRef, { expenses: [] });
@@ -81,11 +101,12 @@ const ExpenseManager = ({ onUpdate }) => {
         ...newExpense,
         amount: parseFloat(newExpense.amount),
         date: new Date(newExpense.date).toISOString().split('T')[0],
-        id: Date.now(),
-        userId: user.uid
+        id: uuidv4(),
+        userId: user.uid,
+        createdAt: new Date().toISOString()
       };
 
-      const updatedExpenses = [...expenses, expenseToAdd];
+      const updatedExpenses = deduplicateExpenses([...expenses, expenseToAdd]);
 
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
@@ -94,6 +115,7 @@ const ExpenseManager = ({ onUpdate }) => {
 
       setExpenses(updatedExpenses);
       onUpdate(updatedExpenses);
+      setSuccess('Expense added successfully');
 
       setNewExpense({
         date: new Date().toISOString().split('T')[0],
@@ -109,7 +131,7 @@ const ExpenseManager = ({ onUpdate }) => {
   };
 
   const handleDelete = async (expense) => {
-    if (!expense) {
+    if (!expense?.id) {
       setError('Invalid expense selected');
       return;
     }
@@ -119,16 +141,13 @@ const ExpenseManager = ({ onUpdate }) => {
 
   const confirmDelete = async () => {
     try {
-      if (!expenseToDelete) {
+      if (!expenseToDelete?.id) {
         setError('No expense selected for deletion');
         setDeleteConfirmOpen(false);
         return;
       }
   
-      // Filter out the expense to delete
-      const updatedExpenses = expenses.filter(exp => exp && exp.id !== expenseToDelete.id);
-      
-      // Update Firestore
+      const updatedExpenses = expenses.filter(exp => exp?.id !== expenseToDelete.id);
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
         expenses: updatedExpenses
@@ -138,7 +157,7 @@ const ExpenseManager = ({ onUpdate }) => {
       onUpdate(updatedExpenses);
       setDeleteConfirmOpen(false);
       setExpenseToDelete(null);
-      setError(null);
+      setSuccess('Expense deleted successfully');
     } catch (err) {
       setError('Failed to delete expense');
       console.error('Error deleting expense:', err);
@@ -146,6 +165,7 @@ const ExpenseManager = ({ onUpdate }) => {
   };
 
   const handleEditStart = (expense) => {
+    if (!expense?.id) return;
     setEditingId(expense.id);
     setEditAmount(expense.amount.toString());
   };
@@ -158,20 +178,21 @@ const ExpenseManager = ({ onUpdate }) => {
       }
 
       const updatedExpenses = expenses.map(expense => 
-        expense.id === expenseId 
+        expense?.id === expenseId 
           ? { ...expense, amount: parseFloat(editAmount) }
           : expense
       );
 
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
-        expenses: updatedExpenses
+        expenses: deduplicateExpenses(updatedExpenses)
       });
 
       setExpenses(updatedExpenses);
       onUpdate(updatedExpenses);
       setEditingId(null);
       setEditAmount('');
+      setSuccess('Expense updated successfully');
     } catch (err) {
       setError('Failed to update expense');
       console.error('Error updating expense:', err);
@@ -185,16 +206,34 @@ const ExpenseManager = ({ onUpdate }) => {
     }).format(amount);
   };
 
+  // Sort expenses by date (most recent first)
+  const sortedExpenses = [...expenses].sort((a, b) => 
+    new Date(b.date) - new Date(a.date)
+  );
+
   return (
-    <div>
-      <Button
-        variant="contained"
-        startIcon={<Plus className="w-4 h-4" />}
-        onClick={() => setOpen(true)}
-        className="mb-4"
-      >
-        Add Expense
-      </Button>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <Button
+          variant="contained"
+          startIcon={<Plus className="w-4 h-4" />}
+          onClick={() => setOpen(true)}
+        >
+          Add Expense
+        </Button>
+      </div>
+
+      {error && (
+        <Alert severity="error" onClose={() => setError(null)} className="mt-4">
+          {error}
+        </Alert>
+      )}
+
+      {success && (
+        <Alert severity="success" onClose={() => setSuccess(null)} className="mt-4">
+          {success}
+        </Alert>
+      )}
 
       {/* Add Expense Dialog */}
       <Dialog 
@@ -206,12 +245,6 @@ const ExpenseManager = ({ onUpdate }) => {
         <DialogTitle>Add New Expense</DialogTitle>
         <form onSubmit={handleSubmit}>
           <DialogContent>
-            {error && (
-              <Alert severity="error" className="mb-4">
-                {error}
-              </Alert>
-            )}
-
             <div className="space-y-4">
               <TextField
                 type="date"
@@ -270,156 +303,139 @@ const ExpenseManager = ({ onUpdate }) => {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-<Dialog
-  open={deleteConfirmOpen}
-  onClose={() => {
-    setDeleteConfirmOpen(false);
-    setExpenseToDelete(null);
-  }}
->
-  <DialogTitle>Confirm Delete</DialogTitle>
-  <DialogContent>
-    <div className="space-y-4">
-      <DialogContentText>
-        Are you sure you want to delete this expense?
-      </DialogContentText>
-      {expenseToDelete && (
-        <div className="mt-3 p-3 bg-gray-50 rounded space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="font-medium">Amount:</span>
-            <span>{formatCurrency(expenseToDelete.amount)}</span>
+      <Dialog
+        open={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false);
+          setExpenseToDelete(null);
+        }}
+      >
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <div className="space-y-4">
+            <DialogContentText>
+              Are you sure you want to delete this expense?
+            </DialogContentText>
+            {expenseToDelete && (
+              <div className="mt-3 p-3 bg-gray-50 rounded space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="font-medium">Amount:</span>
+                  <span>{formatCurrency(expenseToDelete.amount)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">Category:</span>
+                  <span>{expenseToDelete.category}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium">Date:</span>
+                  <span>{new Date(expenseToDelete.date).toLocaleDateString()}</span>
+                </div>
+                {expenseToDelete.description && (
+                  <div className="flex justify-between">
+                    <span className="font-medium">Description:</span>
+                    <span>{expenseToDelete.description}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <div className="flex justify-between">
-            <span className="font-medium">Category:</span>
-            <span>{expenseToDelete.category}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="font-medium">Date:</span>
-            <span>{new Date(expenseToDelete.date).toLocaleDateString()}</span>
-          </div>
-          {expenseToDelete.description && (
-            <div className="flex justify-between">
-              <span className="font-medium">Description:</span>
-              <span>{expenseToDelete.description}</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  </DialogContent>
-  <DialogActions>
-    <Button 
-      onClick={() => {
-        setDeleteConfirmOpen(false);
-        setExpenseToDelete(null);
-      }}
-    >
-      Cancel
-    </Button>
-    <Button 
-      onClick={confirmDelete} 
-      color="error" 
-      variant="contained"
-      disabled={!expenseToDelete}
-    >
-      Delete
-    </Button>
-  </DialogActions>
-</Dialog>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setDeleteConfirmOpen(false);
+              setExpenseToDelete(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={confirmDelete} 
+            color="error" 
+            variant="contained"
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
 
-      {expenses.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-xl font-semibold mb-4">Recent Expenses</h3>
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <table className="min-w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Category
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Description
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {expenses.map((expense) => (
-                  <tr key={expense.id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {new Date(expense.date).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {expense.category}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+      {/* Expenses Table */}
+      {sortedExpenses.length > 0 && (
+        <TableContainer component={Paper} className="mt-6">
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Date</TableCell>
+                <TableCell>Category</TableCell>
+                <TableCell>Amount</TableCell>
+                <TableCell>Description</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {sortedExpenses.map((expense) => (
+                <TableRow key={expense.id}>
+                  <TableCell>
+                    {new Date(expense.date).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>{expense.category}</TableCell>
+                  <TableCell>
+                    {editingId === expense.id ? (
+                      <TextField
+                        type="number"
+                        value={editAmount}
+                        onChange={(e) => setEditAmount(e.target.value)}
+                        size="small"
+                        inputProps={{ 
+                          step: "0.01",
+                          min: "0"
+                        }}
+                        className="w-24"
+                      />
+                    ) : (
+                      formatCurrency(expense.amount)
+                    )}
+                  </TableCell>
+                  <TableCell>{expense.description}</TableCell>
+                  <TableCell align="right">
+                    <div className="flex justify-end space-x-2">
                       {editingId === expense.id ? (
-                        <TextField
-                          type="number"
-                          value={editAmount}
-                          onChange={(e) => setEditAmount(e.target.value)}
-                          size="small"
-                          inputProps={{ 
-                            step: "0.01",
-                            min: "0"
-                          }}
-                          className="w-24"
-                        />
-                      ) : (
-                        formatCurrency(expense.amount)
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {expense.description}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex space-x-2">
-                        {editingId === expense.id ? (
-                          <Tooltip title="Save">
-                            <IconButton
-                              onClick={() => handleEditSave(expense.id)}
-                              size="small"
-                              color="primary"
-                            >
-                              <Save className="w-4 h-4" />
-                            </IconButton>
-                          </Tooltip>
-                        ) : (
-                          <Tooltip title="Edit Amount">
-                            <IconButton
-                              onClick={() => handleEditStart(expense)}
-                              size="small"
-                              color="primary"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </IconButton>
-                          </Tooltip>
-                        )}
-                        <Tooltip title="Delete">
+                        <Tooltip title="Save">
                           <IconButton
-                            onClick={() => handleDelete(expense)}
+                            onClick={() => handleEditSave(expense.id)}
                             size="small"
-                            color="error"
+                            color="primary"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Save className="w-4 h-4" />
                           </IconButton>
                         </Tooltip>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                      ) : (
+                        <Tooltip title="Edit Amount">
+                          <IconButton
+                            onClick={() => handleEditStart(expense)}
+                            size="small"
+                            color="primary"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      <Tooltip title="Delete">
+                        <IconButton
+                          onClick={() => handleDelete(expense)}
+                          size="small"
+                          color="error"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </IconButton>
+                      </Tooltip>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
     </div>
   );
