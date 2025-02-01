@@ -109,17 +109,54 @@ const Dashboard = () => {
   };
 
   // Validation
-  const validateExpense = (expense) => {
-    if (!expense.date) {
-      return { valid: false, error: 'Invalid date format' };
+  const validateExpenseData = (expense) => {
+    if (!expense) return null;
+  
+    try {
+      // Create a new object with validated data
+      return {
+        ...expense,
+        // Ensure date is valid
+        date: (() => {
+          try {
+            const date = new Date(expense.date);
+            return isNaN(date.getTime()) ? new Date().toISOString().split('T')[0] : expense.date;
+          } catch (e) {
+            return new Date().toISOString().split('T')[0];
+          }
+        })(),
+        // Ensure amount is a number
+        amount: (() => {
+          const amount = parseFloat(expense.amount);
+          return isNaN(amount) ? 0 : amount;
+        })(),
+        // Ensure timestamps are valid
+        createdAt: (() => {
+          try {
+            const date = new Date(expense.createdAt);
+            return isNaN(date.getTime()) ? new Date().toISOString() : expense.createdAt;
+          } catch (e) {
+            return new Date().toISOString();
+          }
+        })(),
+        updatedAt: (() => {
+          try {
+            const date = new Date(expense.updatedAt);
+            return isNaN(date.getTime()) ? new Date().toISOString() : expense.updatedAt;
+          } catch (e) {
+            return new Date().toISOString();
+          }
+        })(),
+        // Ensure other required fields exist
+        category: expense.category || 'Other',
+        description: expense.description || '',
+        id: expense.id || uuidv4(),
+        userId: expense.userId || user.uid
+      };
+    } catch (e) {
+      console.error('Error validating expense:', e);
+      return null;
     }
-    if (!expense.amount || isNaN(expense.amount)) {
-      return { valid: false, error: 'Invalid amount' };
-    }
-    if (!expense.category) {
-      return { valid: false, error: 'Invalid category' };
-    }
-    return { valid: true };
   };
 
   // Deduplication function
@@ -156,7 +193,22 @@ const Dashboard = () => {
                 description: cleanData.description(row.description),
                 id: uuidv4(),
                 userId: user.uid,
-                createdAt: new Date().toISOString()
+                createdAt: (() => {
+                  try {
+                    return new Date().toISOString();
+                  } catch (e) {
+                    console.error('Error creating timestamp:', e);
+                    return new Date(0).toISOString(); // fallback to epoch
+                  }
+                })(),
+                updatedAt: (() => {
+                  try {
+                    return new Date().toISOString();
+                  } catch (e) {
+                    console.error('Error creating timestamp:', e);
+                    return new Date(0).toISOString(); // fallback to epoch
+                  }
+                })()
               };
   
               const validation = validateExpense(cleanedExpense);
@@ -215,7 +267,6 @@ const Dashboard = () => {
       event.target.value = '';
     }
   };
-
   const handleRefresh = () => {
     setRefreshing(true);
     loadExpenses().finally(() => setRefreshing(false));
@@ -266,12 +317,12 @@ const Dashboard = () => {
       setError(null);
       const userRef = doc(db, 'users', user.uid);
       const docSnap = await getDoc(userRef);
-
+  
       if (docSnap.exists() && docSnap.data().expenses) {
-        const loadedExpenses = docSnap.data().expenses.map(expense => ({
-          ...expense,
-          id: expense.id || uuidv4()
-        }));
+        const loadedExpenses = docSnap.data().expenses
+          .map(validateExpenseData)
+          .filter(expense => expense !== null);
+          
         const deduplicatedExpenses = deduplicateExpenses(loadedExpenses);
         setExpenses(deduplicatedExpenses);
         await analyzeExpenses(deduplicatedExpenses);
@@ -288,21 +339,26 @@ const Dashboard = () => {
     try {
       setError(null);
       
+      // Validate and clean all expense data before sending to API
+      const validatedExpenses = expenseData
+        .map(validateExpenseData)
+        .filter(expense => expense !== null);
+  
       const response = await fetch(`${import.meta.env.VITE_API}/api/analyze`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          expenses: expenseData,
+          expenses: validatedExpenses,
           user_id: user.uid
         }),
       });
-
+  
       if (!response.ok) {
         throw new Error('Failed to analyze expenses');
       }
-
+  
       const data = await response.json();
       
       if (data.status === 'success') {
@@ -316,6 +372,7 @@ const Dashboard = () => {
       return null;
     }
   };
+  
 
   // Components
   const CSVUploadButton = () => (

@@ -90,33 +90,74 @@ const ExpenseManager = ({ onUpdate }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
-
+  
     try {
-      if (!newExpense.amount || !newExpense.category) {
+      // Basic validation
+      if (!newExpense.amount || !newExpense.category || !newExpense.date) {
         setError('Please fill in all required fields');
         return;
       }
-
+  
+      // Amount validation
+      const parsedAmount = parseFloat(newExpense.amount);
+      if (isNaN(parsedAmount) || parsedAmount < 0) {
+        setError('Please enter a valid amount');
+        return;
+      }
+  
+      // Date validation and formatting
+      let formattedDate;
+      try {
+        const dateObj = new Date(newExpense.date);
+        if (isNaN(dateObj.getTime())) {
+          throw new Error('Invalid date');
+        }
+        formattedDate = dateObj.toISOString().split('T')[0];
+      } catch (err) {
+        setError('Please enter a valid date');
+        return;
+      }
+  
+      // Safe timestamp creation
+      let currentTimestamp;
+      try {
+        currentTimestamp = new Date().toISOString();
+      } catch (err) {
+        console.error('Error creating timestamp:', err);
+        currentTimestamp = new Date(0).toISOString();
+      }
+  
+      // Create expense object with validated data
       const expenseToAdd = {
-        ...newExpense,
-        amount: parseFloat(newExpense.amount),
-        date: new Date(newExpense.date).toISOString().split('T')[0],
+        date: formattedDate,
+        amount: parsedAmount,
+        category: newExpense.category,
+        description: newExpense.description || '',
         id: uuidv4(),
         userId: user.uid,
-        createdAt: new Date().toISOString()
+        createdAt: currentTimestamp,
+        updatedAt: currentTimestamp
       };
-
+  
+      // Verify all object properties are valid before saving
+      for (const [key, value] of Object.entries(expenseToAdd)) {
+        if (value === undefined || value === null || value === NaN) {
+          throw new Error(`Invalid value for ${key}`);
+        }
+      }
+  
       const updatedExpenses = deduplicateExpenses([...expenses, expenseToAdd]);
-
+  
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
         expenses: updatedExpenses
       });
-
+  
       setExpenses(updatedExpenses);
       onUpdate(updatedExpenses);
       setSuccess('Expense added successfully');
-
+  
+      // Reset form
       setNewExpense({
         date: new Date().toISOString().split('T')[0],
         amount: '',
@@ -125,11 +166,10 @@ const ExpenseManager = ({ onUpdate }) => {
       });
       setOpen(false);
     } catch (err) {
-      setError(err.message);
       console.error('Error adding expense:', err);
+      setError(err.message || 'Failed to add expense');
     }
   };
-
   const handleDelete = async (expense) => {
     if (!expense?.id) {
       setError('Invalid expense selected');
