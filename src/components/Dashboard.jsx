@@ -36,6 +36,7 @@ import {
   User, 
   LogOut, 
   Menu as MenuIcon, 
+  BrainCircuit,
   TrendingUp, 
   TrendingDown, 
   AlertCircle,
@@ -296,6 +297,17 @@ const Dashboard = () => {
     navigate('/profile');
   };
 
+  const handleAIClick = () => {
+    handleMenuClose();
+    if (analysis?.ai_insights) {
+      navigate('/ai-insights', { 
+        state: { insights: analysis.ai_insights }
+      });
+    } else {
+      setError('No AI insights available yet. Please analyze some expenses first.');
+    }
+  };
+
   const handleExpenseUpdate = async (updatedExpenses) => {
     const deduplicatedExpenses = deduplicateExpenses(updatedExpenses);
     setExpenses(deduplicatedExpenses);
@@ -414,125 +426,6 @@ const Dashboard = () => {
     </div>
   );
 
-  const AIInsightsCard = ({ insights }) => {
-    if (!insights) return null;
-
-    return (
-      <Card className="col-span-2">
-        <CardContent>
-          <Box className="flex justify-between items-center mb-6">
-            <Typography variant="h6" className="flex items-center">
-              <span className="mr-2">AI Insights</span>
-              <Chip 
-                label="Powered by ML" 
-                size="small" 
-                color="primary" 
-                variant="outlined" 
-              />
-            </Typography>
-            <IconButton 
-              onClick={handleRefresh} 
-              disabled={refreshing}
-              size="small"
-              className="hover:bg-gray-100"
-            >
-              <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
-            </IconButton>
-          </Box>
-  
-          {insights.anomalies?.length > 0 && (
-            <div className="mb-8 p-4 bg-red-50 rounded-lg">
-              <Typography variant="subtitle1" className="flex items-center text-red-700 mb-3">
-                <AlertCircle className="w-5 h-5 mr-2" />
-                Unusual Spending Patterns Detected
-              </Typography>
-              <List>
-                {insights.anomalies.map((anomaly, index) => (
-                  <ListItem key={index} className="pl-0">
-                    <ListItemIcon>
-                      <TrendingUp className="text-red-500 w-5 h-5" />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={
-                        <span className="text-red-700 font-medium">
-                          ${anomaly.amount} on {anomaly.category}
-                        </span>
-                      }
-                      secondary={`on ${new Date(anomaly.date).toLocaleDateString()}`}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </div>
-          )}
-  
-          {insights.next_month_prediction && (
-            <div className="mb-8 p-4 bg-blue-50 rounded-lg">
-              <Typography variant="subtitle1" className="flex items-center text-blue-700 mb-3">
-                <TrendingUp className="w-5 h-5 mr-2" />
-                Next Month's Prediction
-              </Typography>
-              <div className="flex items-center space-x-2">
-                <Chip
-                  label={`Predicted Spending: $${insights.next_month_prediction.toFixed(2)}`}
-                  color="primary"
-                  variant="outlined"
-                  className="text-lg"
-                />
-                <Tooltip title="Based on your spending patterns">
-                  <InfoIcon className="w-4 h-4 text-blue-500 cursor-help" />
-                </Tooltip>
-              </div>
-            </div>
-          )}
-  
-          {insights.spending_insights?.length > 0 && (
-            <div className="p-4 bg-green-50 rounded-lg">
-              <Typography variant="subtitle1" className="flex items-center text-green-700 mb-3">
-                <LineChartIcon className="w-5 h-5 mr-2" />
-                Smart Spending Analysis
-              </Typography>
-              <List>
-                {insights.spending_insights.map((insight, index) => (
-                  <ListItem key={index} className="pl-0">
-                    <ListItemIcon>
-                      {insight.type === 'trend' ? (
-                        insight.message.includes('increasing') ? (
-                          <TrendingUp className="text-red-500 w-5 h-5" />
-                        ) : (
-                          <TrendingDown className="text-green-500 w-5 h-5" />
-                        )
-                      ) : (
-                        <AlertCircle className="text-blue-500 w-5 h-5" />
-                      )}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={insight.message}
-                      className={`${
-                        insight.type === 'trend' && insight.message.includes('increasing')
-                          ? 'text-red-600'
-                          : 'text-green-600'
-                      }`}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </div>
-          )}
-  
-          {/* AI Model Confidence */}
-          <div className="mt-4 flex justify-end">
-            <Chip
-              label={`AI Confidence: High`}
-              size="small"
-              color="success"
-              variant="outlined"
-            />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -569,6 +462,12 @@ const Dashboard = () => {
         onClose={handleMenuClose}
       >
         <MenuItem onClick={handleProfileClick}>Profile</MenuItem>
+        <MenuItem onClick={handleAIClick}>
+  <div className="flex items-center space-x-2">
+    <BrainCircuit className="w-5 h-5" />
+    <span>AI Insights</span>
+  </div>
+</MenuItem>
         <MenuItem onClick={handleMenuClose}>Settings</MenuItem>
         <MenuItem onClick={handleLogout}>Logout</MenuItem>
       </Menu>
@@ -687,10 +586,6 @@ const Dashboard = () => {
                 </div>
               </CardContent>
             </Card>
-
-            {analysis.ai_insights && (
-              <AIInsightsCard insights={analysis.ai_insights} />
-            )}
           </div>
         )}
       </div>

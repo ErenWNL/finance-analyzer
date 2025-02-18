@@ -1,13 +1,12 @@
-// src/App.jsx
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
-import { AuthProvider, useAuth } from './contexts/AuthContext';  // Add useAuth import here
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './components/Login';
 import Signup from './components/Signup';
 import Dashboard from './components/Dashboard';
 import Profile from './components/Profile';
+import AIInsights from './components/AIInsights';
 
-// Move PrivateRoute inside App function to access AuthContext
 function App() {
   const theme = createTheme({
     palette: {
@@ -20,7 +19,6 @@ function App() {
     },
   });
 
-  // Define PrivateRoute here
   const PrivateRoute = ({ children }) => {
     const { user } = useAuth();
     return user ? children : <Navigate to="/login" />;
@@ -33,21 +31,29 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
-            <Route 
-              path="/dashboard" 
+            <Route
+              path="/dashboard"
               element={
                 <PrivateRoute>
                   <Dashboard />
                 </PrivateRoute>
-              } 
+              }
             />
-            <Route 
-              path="/profile" 
+            <Route
+              path="/profile"
               element={
                 <PrivateRoute>
                   <Profile />
                 </PrivateRoute>
-              } 
+              }
+            />
+            <Route
+              path="/ai-insights"
+              element={
+                <PrivateRoute>
+                  <AIInsights />
+                </PrivateRoute>
+              }
             />
             <Route path="/" element={<Navigate to="/login" />} />
           </Routes>
