@@ -42,7 +42,8 @@ import {
   AlertCircle,
   RefreshCw,
   Upload,
-  LineChart as LineChartIcon
+  LineChart as LineChartIcon,
+  Newspaper
 } from 'lucide-react';
 import ExpenseManager from './ExpenseManager';
 import { useAuth } from '../contexts/AuthContext';
@@ -308,6 +309,11 @@ const Dashboard = () => {
     }
   };
 
+  const handleFinanceNewsClick = () => {
+    navigate('/finance-news');
+    handleMenuClose();
+  };  
+
   const handleExpenseUpdate = async (updatedExpenses) => {
     const deduplicatedExpenses = deduplicateExpenses(updatedExpenses);
     setExpenses(deduplicatedExpenses);
@@ -454,11 +460,17 @@ const Dashboard = () => {
       >
         <MenuItem onClick={handleProfileClick}>Profile</MenuItem>
         <MenuItem onClick={handleAIClick}>
-  <div className="flex items-center space-x-2">
-    <BrainCircuit className="w-5 h-5" />
-    <span>AI Insights</span>
-  </div>
-</MenuItem>
+        <div className="flex items-center space-x-2">
+          <BrainCircuit className="w-5 h-5" />
+          <span>AI Insights</span>
+        </div>
+        </MenuItem>
+        <MenuItem onClick={handleFinanceNewsClick}>
+        <div className="flex items-center space-x-2">
+          <Newspaper className="w-5 h-5" />
+          <span>Finance News</span>
+        </div>
+      </MenuItem>
         <MenuItem onClick={handleMenuClose}>Settings</MenuItem>
         <MenuItem onClick={handleLogout}>Logout</MenuItem>
       </Menu>

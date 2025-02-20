@@ -6,6 +6,7 @@ import Signup from './components/Signup';
 import Dashboard from './components/Dashboard';
 import Profile from './components/Profile';
 import AIInsights from './components/AIInsights';
+import FinanceNews from './components/FinanceNew';
 
 function App() {
   const theme = createTheme({
@@ -56,6 +57,7 @@ function App() {
               }
             />
             <Route path="/" element={<Navigate to="/login" />} />
+            <Route path = "/finance-news" element = {<FinanceNews />} />
           </Routes>
         </Router>
       </AuthProvider>
