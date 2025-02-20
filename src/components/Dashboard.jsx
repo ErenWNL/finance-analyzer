@@ -408,15 +408,6 @@ const Dashboard = () => {
               {loading ? 'Importing...' : 'Import CSV'}
             </Button>
           </label>
-          <Button
-            component="a"
-            href="/sample.csv"
-            download
-            size="small"
-            className="text-gray-600"
-          >
-            Download Template
-          </Button>
         </div>
         <div className="text-sm text-gray-600">
           <p>CSV Format: date (YYYY-MM-DD), amount (number), category, description (optional)</p>
