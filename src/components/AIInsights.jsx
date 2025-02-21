@@ -54,14 +54,27 @@ const AIInsights = () => {
   return (
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-4xl mx-auto">
-        <Button
-          variant="outlined"
-          startIcon={<ArrowLeft />}
-          onClick={handleBack}
-          className="mb-4"
-        >
-          Back to Dashboard
-        </Button>
+      <div className="flex items-center gap-4">
+              <button
+                onClick={() => window.history.back()}
+                className="bg-[#1A1D24] text-gray-300 hover:text-white px-4 py-2 rounded-lg border border-gray-700 hover:border-blue-500 transition-all duration-200 flex items-center gap-2 hover:bg-[#1E2128]"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                  />
+                </svg>
+                Back to Dashboard
+              </button>
+            </div>
 
         <Card>
           <CardContent>
