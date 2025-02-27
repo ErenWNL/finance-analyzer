@@ -300,12 +300,14 @@ const Dashboard = () => {
 
   const handleAIClick = () => {
     handleMenuClose();
-    if (analysis?.ai_insights) {
+    if (analysis) {
       navigate('/ai-insights', { 
-        state: { insights: analysis.ai_insights }
+        state: { 
+          data: analysis  // Pass the entire analysis object, not just ai_insights
+        } 
       });
     } else {
-      setError('No AI insights available yet. Please analyze some expenses first.');
+      setError('No analysis data available yet. Please add or import some expenses first.');
     }
   };
 
