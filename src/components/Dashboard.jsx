@@ -17,7 +17,11 @@ import {
   ListItemText,
   Chip,
   Box,
-  Tooltip
+  Tooltip,
+  Select,
+  FormControl,
+  InputLabel,
+  TextField
 } from '@mui/material';
 import { 
   LineChart, 
@@ -43,7 +47,12 @@ import {
   RefreshCw,
   Upload,
   LineChart as LineChartIcon,
-  Newspaper
+  Newspaper,
+  Filter,
+  Plus as PlusIcon,
+  Edit2,
+  Trash2,
+  Save
 } from 'lucide-react';
 import ExpenseManager from './ExpenseManager';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,19 +76,91 @@ const Dashboard = () => {
 
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#ff7300'];
 
+  const RUPEE_SYMBOL = '₹';
+
+  // Hooks
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const db = getFirestore();
+
   // State
   const [expenses, setExpenses] = useState([]);
+  const [filteredExpenses, setFilteredExpenses] = useState([]);
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [anchorEl, setAnchorEl] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState('all');
+  const [availableMonths, setAvailableMonths] = useState([]);
+  
+  // Refs for ExpenseManager actions
+  const [activeExpenseId, setActiveExpenseId] = useState(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  
+  // State for inline editing
+  const [editingCardId, setEditingCardId] = useState(null);
+  const [editCardAmount, setEditCardAmount] = useState('');
 
-  // Hooks
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const db = getFirestore();
+  // Function to handle expense actions from the card UI
+  const handleExpenseAction = (action, expenseId = null) => {
+    if (action === 'add') {
+      setShowAddDialog(true);
+    } else if (action === 'edit') {
+      const expenseToEdit = expenses.find(exp => exp.id === expenseId);
+      if (expenseToEdit) {
+        handleEditStart(expenseToEdit);
+      }
+    } else if (action === 'delete') {
+      setActiveExpenseId(expenseId);
+      setShowDeleteDialog(true);
+    }
+  };
+
+  // Handle edit directly in the Dashboard
+  const handleEditStart = (expense) => {
+    setEditingCardId(expense.id);
+    setEditCardAmount(expense.amount.toString());
+  };
+  
+  const handleEditSave = async (expenseId) => {
+    try {
+      if (!editCardAmount || isNaN(parseFloat(editCardAmount))) {
+        setError('Please enter a valid amount');
+        return;
+      }
+      
+      // Update in the local state first
+      const updatedExpenses = expenses.map(expense => 
+        expense?.id === expenseId 
+          ? { ...expense, amount: parseFloat(editCardAmount) }
+          : expense
+      );
+      
+      // Update in Firestore
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        expenses: updatedExpenses
+      });
+      
+      setExpenses(updatedExpenses);
+      const filtered = filterExpensesByMonth(updatedExpenses, selectedMonth);
+      setFilteredExpenses(filtered);
+      
+      if (updatedExpenses.length > 0) {
+        await analyzeExpenses(updatedExpenses);
+      }
+      
+      setEditingCardId(null);
+      setEditCardAmount('');
+      setSuccess('Expense updated successfully');
+    } catch (err) {
+      console.error('Error updating expense:', err);
+      setError('Failed to update expense');
+    }
+  };
 
   // Data cleaning utilities
   const cleanData = {
@@ -161,6 +242,61 @@ const Dashboard = () => {
     }
   };
 
+  // Extract unique months from expenses
+  const extractAvailableMonths = (expenses) => {
+    const monthSet = new Set();
+    
+    expenses.forEach(expense => {
+      if (expense.date) {
+        const date = new Date(expense.date);
+        if (!isNaN(date.getTime())) {
+          const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          monthSet.add(monthYear);
+        }
+      }
+    });
+    
+    return Array.from(monthSet).sort();
+  };
+  
+  // Filter expenses by selected month
+  const filterExpensesByMonth = (expenses, selectedMonth) => {
+    if (selectedMonth === 'all') {
+      return expenses;
+    }
+    
+    return expenses.filter(expense => {
+      if (!expense || !expense.date) return false;
+      
+      const date = new Date(expense.date);
+      if (isNaN(date.getTime())) return false;
+      
+      const expenseMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      return expenseMonth === selectedMonth;
+    });
+  };
+  
+  // Update filtered expenses when month selection or expenses change
+  useEffect(() => {
+    if (expenses.length > 0) {
+      const months = extractAvailableMonths(expenses);
+      setAvailableMonths(months);
+      
+      // Apply month filtering
+      const filtered = filterExpensesByMonth(expenses, selectedMonth);
+      console.log(`Filtering for month ${selectedMonth}: ${filtered.length}/${expenses.length} expenses match`);
+      setFilteredExpenses(filtered);
+    } else {
+      setFilteredExpenses([]);
+      setAvailableMonths([]);
+    }
+  }, [expenses, selectedMonth]);
+
+  // Handle month selection change
+  const handleMonthChange = (event) => {
+    setSelectedMonth(event.target.value);
+  };
+
   // Deduplication function
   const deduplicateExpenses = (expenseList) => {
     const seen = new Map();
@@ -213,14 +349,13 @@ const Dashboard = () => {
                 })()
               };
   
-              const validation = validateExpense(cleanedExpense);
-  
-              if (validation.valid) {
+              // Fix: Proper validation function call
+              if (validateExpenseData(cleanedExpense)) {
                 validExpenses.push(cleanedExpense);
               } else {
                 invalidRows.push({
                   rowNumber: index + 2,
-                  error: validation.error,
+                  error: 'Invalid expense data',
                   originalData: row
                 });
               }
@@ -269,6 +404,7 @@ const Dashboard = () => {
       event.target.value = '';
     }
   };
+
   const handleRefresh = () => {
     setRefreshing(true);
     loadExpenses().finally(() => setRefreshing(false));
@@ -317,10 +453,22 @@ const Dashboard = () => {
   };  
 
   const handleExpenseUpdate = async (updatedExpenses) => {
-    const deduplicatedExpenses = deduplicateExpenses(updatedExpenses);
-    setExpenses(deduplicatedExpenses);
-    if (deduplicatedExpenses.length > 0) {
-      await analyzeExpenses(deduplicatedExpenses);
+    try {
+      const deduplicatedExpenses = deduplicateExpenses(updatedExpenses);
+      setExpenses(deduplicatedExpenses);
+      
+      // Recalculate filtered expenses based on the updated expense list
+      const filtered = filterExpensesByMonth(deduplicatedExpenses, selectedMonth);
+      setFilteredExpenses(filtered);
+      
+      if (deduplicatedExpenses.length > 0) {
+        await analyzeExpenses(deduplicatedExpenses);
+      }
+      
+      console.log(`Expenses updated. Total: ${deduplicatedExpenses.length}, Filtered: ${filtered.length}`);
+    } catch (err) {
+      console.error('Error in handleExpenseUpdate:', err);
+      setError('Failed to update expenses');
     }
   };
 
@@ -393,7 +541,6 @@ const Dashboard = () => {
     }
   };
   
-
   // Components
   const CSVUploadButton = () => (
     <div className="mb-4">
@@ -416,15 +563,97 @@ const Dashboard = () => {
               {loading ? 'Importing...' : 'Import CSV'}
             </Button>
           </label>
+          <Tooltip title="Refresh data">
+            <span>
+              <IconButton onClick={handleRefresh} disabled={refreshing}>
+                <RefreshCw className={refreshing ? "animate-spin" : ""} size={20} />
+              </IconButton>
+            </span>
+          </Tooltip>
         </div>
         <div className="text-sm text-gray-600">
           <p>CSV Format: date (YYYY-MM-DD), amount (number), category, description (optional)</p>
-          <p>Valid categories: {categories.join(', ')}</p>
         </div>
       </div>
     </div>
   );
 
+  const MonthFilter = () => (
+    <FormControl variant="outlined" size="small" style={{ minWidth: 150 }}>
+      <InputLabel id="month-filter-label">Filter by Month</InputLabel>
+      <Select
+        labelId="month-filter-label"
+        id="month-filter"
+        value={selectedMonth}
+        onChange={handleMonthChange}
+        label="Filter by Month"
+        startAdornment={<Filter size={16} style={{ marginRight: 8 }} />}
+      >
+        <MenuItem value="all">All Months</MenuItem>
+        {availableMonths.map(month => (
+          <MenuItem key={month} value={month}>
+            {new Date(month + '-01').toLocaleString('default', { month: 'long', year: 'numeric' })}
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+  );
+
+  const StatusSummary = () => {
+    // If no expenses exist
+    if (expenses.length === 0 && !loading) {
+      return (
+        <Alert severity="info" className="mt-4 mb-4">
+          <div className="flex items-center">
+            <AlertCircle className="mr-2" size={20} />
+            No expenses found. Add your first expense or import a CSV file to get started.
+          </div>
+        </Alert>
+      );
+    }
+    
+    // If all expenses are being shown
+    if (selectedMonth === 'all') {
+      // Make sure to handle potential NaN values
+      const totalAmount = expenses.reduce((sum, exp) => {
+        const amount = parseFloat(exp?.amount || 0);
+        return sum + (isNaN(amount) ? 0 : amount);
+      }, 0);
+      
+      return (
+        <Chip 
+          icon={<InfoIcon />} 
+          label={`Showing all ${expenses.length} expenses | Total: ${RUPEE_SYMBOL}${totalAmount.toFixed(2)}`}
+          color="primary" 
+          variant="outlined" 
+          className="mb-4"
+        />
+      );
+    }
+    
+    // If filtered expenses exist for a specific month
+    if (selectedMonth !== 'all') {
+      // Handle potential NaN values safely
+      const totalFiltered = filteredExpenses.reduce((sum, exp) => {
+        const amount = parseFloat(exp?.amount || 0);
+        return sum + (isNaN(amount) ? 0 : amount);
+      }, 0);
+      
+      const monthName = new Date(selectedMonth + '-01').toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      return (
+        <Chip 
+          icon={<InfoIcon />} 
+          label={`Showing ${filteredExpenses.length} expenses for ${monthName} | Total: ${RUPEE_SYMBOL}${totalFiltered.toFixed(2)}`}
+          color="primary" 
+          variant="outlined" 
+          className="mb-4"
+        />
+      );
+    }
+    
+    return null;
+  };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -444,10 +673,11 @@ const Dashboard = () => {
           </Typography>
 
           <div className="flex items-center gap-2">
-            <User className="w-5 h-5" />
-            <Typography variant="body1">
-              {user?.email}
-            </Typography>
+            <Tooltip title={user?.email}>
+              <IconButton color="inherit">
+                <User className="w-5 h-5" />
+              </IconButton>
+            </Tooltip>
             <Button color="inherit" onClick={handleLogout}>
               <LogOut className="w-5 h-5" />
             </Button>
@@ -460,21 +690,22 @@ const Dashboard = () => {
         open={Boolean(anchorEl)}
         onClose={handleMenuClose}
       >
-        <MenuItem onClick={handleProfileClick}>Profile</MenuItem>
+        <MenuItem onClick={handleProfileClick}>
+          <ListItemIcon><User size={18} /></ListItemIcon>
+          <ListItemText>Profile</ListItemText>
+        </MenuItem>
         <MenuItem onClick={handleAIClick}>
-        <div className="flex items-center space-x-2">
-          <BrainCircuit className="w-5 h-5" />
-          <span>AI Insights</span>
-        </div>
+          <ListItemIcon><BrainCircuit size={18} /></ListItemIcon>
+          <ListItemText>AI Insights</ListItemText>
         </MenuItem>
         <MenuItem onClick={handleFinanceNewsClick}>
-        <div className="flex items-center space-x-2">
-          <Newspaper className="w-5 h-5" />
-          <span>Finance News</span>
-        </div>
-      </MenuItem>
-        <MenuItem onClick={handleMenuClose}>Settings</MenuItem>
-        <MenuItem onClick={handleLogout}>Logout</MenuItem>
+          <ListItemIcon><Newspaper size={18} /></ListItemIcon>
+          <ListItemText>Finance News</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={handleMenuClose}>
+          <ListItemIcon><AlertCircle size={18} /></ListItemIcon>
+          <ListItemText>Settings</ListItemText>
+        </MenuItem>
       </Menu>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -490,15 +721,156 @@ const Dashboard = () => {
           </Alert>
         )}
 
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-wrap justify-between items-center mb-6">
           <CSVUploadButton />
+          {expenses.length > 0 && <MonthFilter />}
         </div>
 
-        <ExpenseManager 
-          expenses={expenses}
-          onUpdate={handleExpenseUpdate}
-          categories={categories}
-        />
+        <StatusSummary />
+
+        {/* Enhanced Transactions Display */}
+        <div className="mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <Typography variant="h6" className="font-medium">Transactions</Typography>
+            <Button
+              variant="contained"
+              startIcon={<PlusIcon className="w-4 h-4" />}
+              onClick={() => handleExpenseAction('add')}
+              size="small"
+            >
+              Add Expense
+            </Button>
+          </div>
+          
+          {/* Transaction Cards Layout */}
+          {filteredExpenses.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredExpenses.map(expense => {
+                // Determine category icon based on category name
+                let CategoryIcon;
+                switch(expense.category) {
+                  case 'Food':
+                    CategoryIcon = () => <span role="img" aria-label="food" className="text-xl">🍔</span>;
+                    break;
+                  case 'Transportation':
+                    CategoryIcon = () => <span role="img" aria-label="transportation" className="text-xl">🚗</span>;
+                    break;
+                  case 'Housing':
+                    CategoryIcon = () => <span role="img" aria-label="housing" className="text-xl">🏠</span>;
+                    break;
+                  case 'Utilities':
+                    CategoryIcon = () => <span role="img" aria-label="utilities" className="text-xl">💡</span>;
+                    break;
+                  case 'Entertainment':
+                    CategoryIcon = () => <span role="img" aria-label="entertainment" className="text-xl">🎬</span>;
+                    break;
+                  case 'Healthcare':
+                    CategoryIcon = () => <span role="img" aria-label="healthcare" className="text-xl">⚕️</span>;
+                    break;
+                  case 'Shopping':
+                    CategoryIcon = () => <span role="img" aria-label="shopping" className="text-xl">🛍️</span>;
+                    break;
+                  default:
+                    CategoryIcon = () => <span role="img" aria-label="other" className="text-xl">📌</span>;
+                }
+                
+                // Format date for display
+                const expenseDate = new Date(expense.date);
+                const formattedDate = expenseDate.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric'
+                });
+                
+                return (
+                  <Card key={expense.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-4">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center">
+                          <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center mr-3">
+                            <CategoryIcon />
+                          </div>
+                          <div>
+                            <Typography variant="subtitle1" className="font-medium line-clamp-1">
+                              {expense.description || expense.category}
+                            </Typography>
+                            <Typography variant="body2" color="textSecondary" className="text-sm">
+                              {formattedDate}
+                            </Typography>
+                          </div>
+                        </div>
+                        <Typography variant="h6" className="font-semibold text-right">
+                          {editingCardId === expense.id ? (
+                            <div className="flex items-center">
+                              <TextField
+                                type="number"
+                                value={editCardAmount}
+                                onChange={(e) => setEditCardAmount(e.target.value)}
+                                size="small"
+                                inputProps={{ step: "0.01", min: "0" }}
+                                className="w-24"
+                                variant="standard"
+                                InputProps={{
+                                  disableUnderline: true
+                                }}
+                              />
+                              <IconButton 
+                                size="small" 
+                                color="primary"
+                                onClick={() => handleEditSave(expense.id)}
+                                className="ml-1"
+                              >
+                                <Save className="w-4 h-4" />
+                              </IconButton>
+                            </div>
+                          ) : (
+                            <>{RUPEE_SYMBOL} {parseFloat(expense.amount).toFixed(2)}</>
+                          )}
+                        </Typography>
+                      </div>
+                      
+                      <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+                        <Chip 
+                          label={expense.category} 
+                          size="small" 
+                          color="primary" 
+                          variant="outlined"
+                        />
+                        <div className="flex space-x-1">
+                          <Tooltip title="Edit Amount">
+                            <IconButton 
+                              size="small" 
+                              color="primary"
+                              onClick={() => handleExpenseAction('edit', expense.id)}
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete">
+                            <IconButton 
+                              size="small" 
+                              color="error"
+                              onClick={() => handleExpenseAction('delete', expense.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </IconButton>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <Alert severity="info" className="mt-4">
+              <div className="flex items-center">
+                <AlertCircle className="mr-2" size={20} />
+                No transactions found for this period. Add your first expense or select a different month.
+              </div>
+            </Alert>
+          )}
+        </div>
 
         {loading && (
           <Box className="flex justify-center my-8">
@@ -510,9 +882,14 @@ const Dashboard = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
             <Card>
               <CardContent>
-                <Typography variant="h6" className="mb-4">
-                  Monthly Spending Trend
-                </Typography>
+                <div className="flex justify-between items-center mb-4">
+                  <Typography variant="h6">
+                    Monthly Spending Trend
+                  </Typography>
+                  <Tooltip title="Shows your spending patterns over time">
+                    <InfoIcon fontSize="small" color="action" />
+                  </Tooltip>
+                </div>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={Object.entries(analysis.monthly_totals || {}).map(([month, amount]) => ({
                     month,
@@ -522,7 +899,6 @@ const Dashboard = () => {
                     <XAxis dataKey="month" />
                     <YAxis />
                     <RechartsTooltip />
-                    <Legend />
                     <Line 
                       type="monotone" 
                       dataKey="amount" 
@@ -536,9 +912,14 @@ const Dashboard = () => {
 
             <Card>
               <CardContent>
-                <Typography variant="h6" className="mb-4">
-                  Expense Categories
-                </Typography>
+                <div className="flex justify-between items-center mb-4">
+                  <Typography variant="h6">
+                    Expense Categories
+                  </Typography>
+                  <Tooltip title="Breakdown of your spending by category">
+                    <InfoIcon fontSize="small" color="action" />
+                  </Tooltip>
+                </div>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
@@ -551,14 +932,13 @@ const Dashboard = () => {
                       outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
-                      label
+                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
                     >
                       {Object.entries(analysis.category_totals || {}).map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
                     <RechartsTooltip />
-                    <Legend />
                   </PieChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -566,33 +946,60 @@ const Dashboard = () => {
 
             <Card>
               <CardContent>
-                <Typography variant="h6" className="mb-4">
-                  Summary
-                </Typography>
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <Typography>Total Spent:</Typography>
-                    <Typography className="font-medium">
-                      ${analysis.total_spent?.toFixed(2)}
-                    </Typography>
-                  </div>
-                  <div className="flex justify-between">
-                    <Typography>Average Expense:</Typography>
-                    <Typography className="font-medium">
-                      ${analysis.average_expense?.toFixed(2)}
-                    </Typography>
-                  </div>
-                  <div className="flex justify-between">
-                    <Typography>Transaction Count:</Typography>
-                    <Typography className="font-medium">
-                      {analysis.transaction_count}
-                    </Typography>
-                  </div>
+                <div className="flex justify-between items-center mb-4">
+                  <Typography variant="h6">
+                    Spending Insights
+                  </Typography>
+                  <Tooltip title="Key metrics about your financial activity">
+                    <InfoIcon fontSize="small" color="action" />
+                  </Tooltip>
                 </div>
+                <List dense>
+                  <ListItem>
+                    <ListItemIcon><TrendingUp color={analysis.total_spent > 1000 ? "red" : "green"} /></ListItemIcon>
+                    <ListItemText 
+                      primary="Total Spent" 
+                      secondary={`${RUPEE_SYMBOL}${analysis.total_spent?.toFixed(2)}`} 
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemIcon><TrendingDown /></ListItemIcon>
+                    <ListItemText 
+                      primary="Average Expense" 
+                      secondary={`${RUPEE_SYMBOL}${analysis.average_expense?.toFixed(2)}`} 
+                    />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemIcon><LineChartIcon /></ListItemIcon>
+                    <ListItemText 
+                      primary="Transaction Count" 
+                      secondary={analysis.transaction_count} 
+                    />
+                  </ListItem>
+                </List>
               </CardContent>
             </Card>
           </div>
         )}
+
+        {/* ExpenseManager for handling data operations */}
+        <div className="hidden">
+          <ExpenseManager 
+            id="expense-manager"
+            key={`expense-manager-${selectedMonth}`}
+            expenses={filteredExpenses}
+            onUpdate={handleExpenseUpdate}
+            categories={categories}
+            activeExpenseId={activeExpenseId}
+            showAddDialog={showAddDialog}
+            showDeleteDialog={showDeleteDialog}
+            onDialogClose={() => {
+              setActiveExpenseId(null);
+              setShowAddDialog(false);
+              setShowDeleteDialog(false);
+            }}
+          />
+        </div>
       </div>
     </div>
   );

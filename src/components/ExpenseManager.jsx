@@ -11,14 +11,21 @@ import { useAuth } from '../contexts/AuthContext';
 import { getFirestore, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 
-const ExpenseManager = ({ onUpdate }) => {
+const ExpenseManager = ({ 
+  expenses, 
+  categories, 
+  onUpdate, 
+  activeExpenseId = null,
+  showAddDialog = false,
+  showDeleteDialog = false,
+  onDialogClose = () => {}
+}) => {
   const { user } = useAuth();
   const db = getFirestore();
   
-  const [expenses, setExpenses] = useState([]);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editAmount, setEditAmount] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -32,7 +39,8 @@ const ExpenseManager = ({ onUpdate }) => {
     description: ''
   });
 
-  const categories = [
+  // Use the categories from props, or fallback to default if not provided
+  const expenseCategories = categories || [
     'Food',
     'Transportation',
     'Housing',
@@ -43,6 +51,40 @@ const ExpenseManager = ({ onUpdate }) => {
     'Other'
   ];
 
+  // Handle dialog close with cleanup
+  const handleDialogClose = () => {
+    setOpen(false);
+    setDeleteConfirmOpen(false);
+    setEditingId(null);
+    setExpenseToDelete(null);
+    onDialogClose();
+  };
+
+  // Respond to external triggers
+  useEffect(() => {
+    if (showAddDialog) {
+      setOpen(true);
+    }
+  }, [showAddDialog]);
+  
+  useEffect(() => {
+    if (activeExpenseId) {
+      const expense = expenses.find(exp => exp.id === activeExpenseId);
+      if (expense) {
+        handleEditStart(expense);
+      }
+    }
+  }, [activeExpenseId]);
+  
+  useEffect(() => {
+    if (showDeleteDialog && activeExpenseId) {
+      const expense = expenses.find(exp => exp.id === activeExpenseId);
+      if (expense) {
+        handleDelete(expense);
+      }
+    }
+  }, [showDeleteDialog, activeExpenseId]);
+
   // Deduplication function
   const deduplicateExpenses = (expenseList) => {
     const seen = new Map();
@@ -52,39 +94,6 @@ const ExpenseManager = ({ onUpdate }) => {
       seen.set(expense.id, true);
       return true;
     });
-  };
-
-  useEffect(() => {
-    if (user?.uid) {
-      loadExpenses();
-    }
-  }, [user]);
-
-  const loadExpenses = async () => {
-    try {
-      const userRef = doc(db, 'users', user.uid);
-      const docSnap = await getDoc(userRef);
-
-      if (docSnap.exists()) {
-        const userData = docSnap.data();
-        if (userData.expenses) {
-          const processedExpenses = userData.expenses.map(expense => ({
-            ...expense,
-            id: expense.id || uuidv4()
-          }));
-          const uniqueExpenses = deduplicateExpenses(processedExpenses);
-          setExpenses(uniqueExpenses);
-          onUpdate(uniqueExpenses);
-        }
-      } else {
-        await setDoc(userRef, { expenses: [] });
-      }
-    } catch (err) {
-      console.error('Error loading expenses:', err);
-      setError('Failed to load expenses');
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleSubmit = async (e) => {
@@ -153,9 +162,8 @@ const ExpenseManager = ({ onUpdate }) => {
         expenses: updatedExpenses
       });
   
-      setExpenses(updatedExpenses);
       onUpdate(updatedExpenses);
-      setSuccess('Expense added successfully');
+      setSuccess(`Expense added successfully: ${formatCurrency(parsedAmount)}`);
   
       // Reset form
       setNewExpense({
@@ -164,12 +172,13 @@ const ExpenseManager = ({ onUpdate }) => {
         category: '',
         description: ''
       });
-      setOpen(false);
+      handleDialogClose();
     } catch (err) {
       console.error('Error adding expense:', err);
       setError(err.message || 'Failed to add expense');
     }
   };
+
   const handleDelete = async (expense) => {
     if (!expense?.id) {
       setError('Invalid expense selected');
@@ -183,7 +192,7 @@ const ExpenseManager = ({ onUpdate }) => {
     try {
       if (!expenseToDelete?.id) {
         setError('No expense selected for deletion');
-        setDeleteConfirmOpen(false);
+        handleDialogClose();
         return;
       }
   
@@ -193,10 +202,8 @@ const ExpenseManager = ({ onUpdate }) => {
         expenses: updatedExpenses
       });
   
-      setExpenses(updatedExpenses);
       onUpdate(updatedExpenses);
-      setDeleteConfirmOpen(false);
-      setExpenseToDelete(null);
+      handleDialogClose();
       setSuccess('Expense deleted successfully');
     } catch (err) {
       setError('Failed to delete expense');
@@ -224,15 +231,25 @@ const ExpenseManager = ({ onUpdate }) => {
       );
 
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
-        expenses: deduplicateExpenses(updatedExpenses)
-      });
+      // We need to update the entire expenses array in Firestore, not just the filtered ones
+      const docSnap = await getDoc(userRef);
+      if (docSnap.exists()) {
+        const allExpenses = docSnap.data().expenses || [];
+        const updatedAllExpenses = allExpenses.map(expense => 
+          expense?.id === expenseId 
+            ? { ...expense, amount: parseFloat(editAmount) }
+            : expense
+        );
+        
+        await updateDoc(userRef, {
+          expenses: deduplicateExpenses(updatedAllExpenses)
+        });
+      }
 
-      setExpenses(updatedExpenses);
       onUpdate(updatedExpenses);
       setEditingId(null);
       setEditAmount('');
-      setSuccess('Expense updated successfully');
+      setSuccess(`Expense updated successfully to ${formatCurrency(parseFloat(editAmount))}`);
     } catch (err) {
       setError('Failed to update expense');
       console.error('Error updating expense:', err);
@@ -240,9 +257,10 @@ const ExpenseManager = ({ onUpdate }) => {
   };
 
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-IN', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'INR',
+      maximumFractionDigits: 2
     }).format(amount);
   };
 
@@ -251,6 +269,8 @@ const ExpenseManager = ({ onUpdate }) => {
     new Date(b.date) - new Date(a.date)
   );
 
+  const RUPEE_SYMBOL = '₹';
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -258,6 +278,7 @@ const ExpenseManager = ({ onUpdate }) => {
           variant="contained"
           startIcon={<Plus className="w-4 h-4" />}
           onClick={() => setOpen(true)}
+          data-action="add"
         >
           Add Expense
         </Button>
@@ -278,7 +299,7 @@ const ExpenseManager = ({ onUpdate }) => {
       {/* Add Expense Dialog */}
       <Dialog 
         open={open} 
-        onClose={() => setOpen(false)}
+        onClose={handleDialogClose}
         maxWidth="sm"
         fullWidth
       >
@@ -303,6 +324,9 @@ const ExpenseManager = ({ onUpdate }) => {
                 onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
                 fullWidth
                 required
+                InputProps={{
+                  startAdornment: <span className="text-gray-500 mr-1">{RUPEE_SYMBOL}</span>,
+                }}
                 inputProps={{ 
                   step: "0.01",
                   min: "0"
@@ -317,7 +341,7 @@ const ExpenseManager = ({ onUpdate }) => {
                 fullWidth
                 required
               >
-                {categories.map((category) => (
+                {expenseCategories.map((category) => (
                   <MenuItem key={category} value={category}>
                     {category}
                   </MenuItem>
@@ -336,7 +360,7 @@ const ExpenseManager = ({ onUpdate }) => {
           </DialogContent>
           
           <DialogActions>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={handleDialogClose}>Cancel</Button>
             <Button type="submit" variant="contained">Add</Button>
           </DialogActions>
         </form>
@@ -345,10 +369,7 @@ const ExpenseManager = ({ onUpdate }) => {
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={deleteConfirmOpen}
-        onClose={() => {
-          setDeleteConfirmOpen(false);
-          setExpenseToDelete(null);
-        }}
+        onClose={handleDialogClose}
       >
         <DialogTitle>Confirm Delete</DialogTitle>
         <DialogContent>
@@ -382,10 +403,7 @@ const ExpenseManager = ({ onUpdate }) => {
         </DialogContent>
         <DialogActions>
           <Button 
-            onClick={() => {
-              setDeleteConfirmOpen(false);
-              setExpenseToDelete(null);
-            }}
+            onClick={handleDialogClose}
           >
             Cancel
           </Button>
@@ -400,7 +418,7 @@ const ExpenseManager = ({ onUpdate }) => {
       </Dialog>
 
       {/* Expenses Table */}
-      {sortedExpenses.length > 0 && (
+      {sortedExpenses.length > 0 ? (
         <TableContainer component={Paper} className="mt-6">
           <Table>
             <TableHead>
@@ -431,6 +449,10 @@ const ExpenseManager = ({ onUpdate }) => {
                           min: "0"
                         }}
                         className="w-24"
+                        variant="standard"
+                        InputProps={{
+                          disableUnderline: true
+                        }}
                       />
                     ) : (
                       formatCurrency(expense.amount)
@@ -455,6 +477,8 @@ const ExpenseManager = ({ onUpdate }) => {
                             onClick={() => handleEditStart(expense)}
                             size="small"
                             color="primary"
+                            data-expense-id={expense.id}
+                            data-action="edit"
                           >
                             <Edit2 className="w-4 h-4" />
                           </IconButton>
@@ -465,6 +489,8 @@ const ExpenseManager = ({ onUpdate }) => {
                           onClick={() => handleDelete(expense)}
                           size="small"
                           color="error"
+                          data-expense-id={expense.id}
+                          data-action="delete"
                         >
                           <Trash2 className="w-4 h-4" />
                         </IconButton>
@@ -476,6 +502,10 @@ const ExpenseManager = ({ onUpdate }) => {
             </TableBody>
           </Table>
         </TableContainer>
+      ) : (
+        <Alert severity="info" className="mt-4">
+          No expenses found for the selected period.
+        </Alert>
       )}
     </div>
   );
