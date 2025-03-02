@@ -21,7 +21,12 @@ import {
   Select,
   FormControl,
   InputLabel,
-  TextField
+  TextField,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions
 } from '@mui/material';
 import { 
   LineChart, 
@@ -94,6 +99,7 @@ const Dashboard = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState('all');
   const [availableMonths, setAvailableMonths] = useState([]);
+  const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false);
   
   // Refs for ExpenseManager actions
   const [activeExpenseId, setActiveExpenseId] = useState(null);
@@ -159,6 +165,32 @@ const Dashboard = () => {
     } catch (err) {
       console.error('Error updating expense:', err);
       setError('Failed to update expense');
+    }
+  };
+
+  const handleClearAll = () => {
+    setClearAllDialogOpen(true);
+  };
+  
+  const confirmClearAll = async () => {
+    try {
+      setLoading(true);
+      const userRef = doc(db, 'users', user.uid);
+      
+      await updateDoc(userRef, {
+        expenses: []
+      });
+      
+      setExpenses([]);
+      setFilteredExpenses([]);
+      setAnalysis(null);
+      setClearAllDialogOpen(false);
+      setSuccess('All transactions cleared successfully');
+    } catch (error) {
+      setError('Failed to clear transactions');
+      console.error('Clear all error:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -472,6 +504,46 @@ const Dashboard = () => {
     }
   };
 
+  const ClearAllConfirmationDialog = () => (
+    <Dialog
+      open={clearAllDialogOpen}
+      onClose={() => setClearAllDialogOpen(false)}
+    >
+      <DialogTitle>
+        <div className="flex items-center text-red-600">
+          <AlertCircle className="w-6 h-6 mr-2" />
+          Confirm Delete All
+        </div>
+      </DialogTitle>
+      <DialogContent>
+        <div className="space-y-4">
+          <DialogContentText>
+            Are you sure you want to delete <strong>all</strong> your transactions? This action cannot be undone.
+          </DialogContentText>
+          <Alert severity="warning" className="mt-3">
+            This will permanently remove {expenses.length} transactions from your account.
+          </Alert>
+        </div>
+      </DialogContent>
+      <DialogActions>
+        <Button 
+          onClick={() => setClearAllDialogOpen(false)}
+          color="primary"
+        >
+          Cancel
+        </Button>
+        <Button 
+          onClick={confirmClearAll} 
+          color="error" 
+          variant="contained"
+          startIcon={<Trash2 className="w-4 h-4" />}
+        >
+          Delete All
+        </Button>
+      </DialogActions>
+    </Dialog>
+  ); 
+
   // Data loading and analysis
   useEffect(() => {
     if (user?.uid) {
@@ -667,7 +739,7 @@ const Dashboard = () => {
           >
             <MenuIcon />
           </IconButton>
-          
+
           <Typography variant="h6" className="flex-grow">
             Finance Analyzer
           </Typography>
@@ -691,32 +763,49 @@ const Dashboard = () => {
         onClose={handleMenuClose}
       >
         <MenuItem onClick={handleProfileClick}>
-          <ListItemIcon><User size={18} /></ListItemIcon>
+          <ListItemIcon>
+            <User size={18} />
+          </ListItemIcon>
           <ListItemText>Profile</ListItemText>
         </MenuItem>
         <MenuItem onClick={handleAIClick}>
-          <ListItemIcon><BrainCircuit size={18} /></ListItemIcon>
+          <ListItemIcon>
+            <BrainCircuit size={18} />
+          </ListItemIcon>
           <ListItemText>AI Insights</ListItemText>
         </MenuItem>
         <MenuItem onClick={handleFinanceNewsClick}>
-          <ListItemIcon><Newspaper size={18} /></ListItemIcon>
+          <ListItemIcon>
+            <Newspaper size={18} />
+          </ListItemIcon>
           <ListItemText>Finance News</ListItemText>
         </MenuItem>
         <MenuItem onClick={handleMenuClose}>
-          <ListItemIcon><AlertCircle size={18} /></ListItemIcon>
+          <ListItemIcon>
+            <AlertCircle size={18} />
+          </ListItemIcon>
           <ListItemText>Settings</ListItemText>
         </MenuItem>
       </Menu>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {error && (
-          <Alert severity="error" className="mb-4" onClose={() => setError(null)}>
+        {/* Only show error messages when there are expenses but analysis failed */}
+        {error && expenses.length > 0 && (
+          <Alert
+            severity="error"
+            className="mb-4"
+            onClose={() => setError(null)}
+          >
             {error}
           </Alert>
         )}
 
         {success && (
-          <Alert severity="success" className="mb-4" onClose={() => setSuccess(null)}>
+          <Alert
+            severity="success"
+            className="mb-4"
+            onClose={() => setSuccess(null)}
+          >
             {success}
           </Alert>
         )}
@@ -728,149 +817,155 @@ const Dashboard = () => {
 
         <StatusSummary />
 
-        {/* Enhanced Transactions Display */}
-        <div className="mb-8">
-          <div className="flex justify-between items-center mb-4">
-            <Typography variant="h6" className="font-medium">Transactions</Typography>
+        {/* Transactions header */}
+        <div className="flex justify-between items-center mb-4">
+          <Typography variant="h6" className="font-medium">
+            Transactions
+          </Typography>
+          <div className="flex space-x-2">
+            {expenses.length > 0 && (
+              <Button
+                variant="outlined"
+                color="error"
+                startIcon={<Trash2 className="w-4 h-4" />}
+                onClick={handleClearAll}
+                size="small"
+              >
+                Clear All
+              </Button>
+            )}
             <Button
               variant="contained"
               startIcon={<PlusIcon className="w-4 h-4" />}
-              onClick={() => handleExpenseAction('add')}
+              onClick={() => handleExpenseAction("add")}
               size="small"
             >
               Add Expense
             </Button>
           </div>
-          
-          {/* Transaction Cards Layout */}
-          {filteredExpenses.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredExpenses.map(expense => {
-                // Determine category icon based on category name
-                let CategoryIcon;
-                switch(expense.category) {
-                  case 'Food':
-                    CategoryIcon = () => <span role="img" aria-label="food" className="text-xl">🍔</span>;
-                    break;
-                  case 'Transportation':
-                    CategoryIcon = () => <span role="img" aria-label="transportation" className="text-xl">🚗</span>;
-                    break;
-                  case 'Housing':
-                    CategoryIcon = () => <span role="img" aria-label="housing" className="text-xl">🏠</span>;
-                    break;
-                  case 'Utilities':
-                    CategoryIcon = () => <span role="img" aria-label="utilities" className="text-xl">💡</span>;
-                    break;
-                  case 'Entertainment':
-                    CategoryIcon = () => <span role="img" aria-label="entertainment" className="text-xl">🎬</span>;
-                    break;
-                  case 'Healthcare':
-                    CategoryIcon = () => <span role="img" aria-label="healthcare" className="text-xl">⚕️</span>;
-                    break;
-                  case 'Shopping':
-                    CategoryIcon = () => <span role="img" aria-label="shopping" className="text-xl">🛍️</span>;
-                    break;
-                  default:
-                    CategoryIcon = () => <span role="img" aria-label="other" className="text-xl">📌</span>;
-                }
-                
-                // Format date for display
-                const expenseDate = new Date(expense.date);
-                const formattedDate = expenseDate.toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric'
-                });
-                
-                return (
-                  <Card key={expense.id} className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex items-center">
-                          <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center mr-3">
-                            <CategoryIcon />
-                          </div>
-                          <div>
-                            <Typography variant="subtitle1" className="font-medium line-clamp-1">
-                              {expense.description || expense.category}
-                            </Typography>
-                            <Typography variant="body2" color="textSecondary" className="text-sm">
-                              {formattedDate}
-                            </Typography>
-                          </div>
+        </div>
+
+        {/* Transaction Cards Layout - no empty state message here */}
+        {filteredExpenses.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+            {filteredExpenses.map(expense => {
+              // Determine category icon based on category name
+              let CategoryIcon;
+              switch(expense.category) {
+                case 'Food':
+                  CategoryIcon = () => <span role="img" aria-label="food" className="text-xl">🍔</span>;
+                  break;
+                case 'Transportation':
+                  CategoryIcon = () => <span role="img" aria-label="transportation" className="text-xl">🚗</span>;
+                  break;
+                case 'Housing':
+                  CategoryIcon = () => <span role="img" aria-label="housing" className="text-xl">🏠</span>;
+                  break;
+                case 'Utilities':
+                  CategoryIcon = () => <span role="img" aria-label="utilities" className="text-xl">💡</span>;
+                  break;
+                case 'Entertainment':
+                  CategoryIcon = () => <span role="img" aria-label="entertainment" className="text-xl">🎬</span>;
+                  break;
+                case 'Healthcare':
+                  CategoryIcon = () => <span role="img" aria-label="healthcare" className="text-xl">⚕️</span>;
+                  break;
+                case 'Shopping':
+                  CategoryIcon = () => <span role="img" aria-label="shopping" className="text-xl">🛍️</span>;
+                  break;
+                default:
+                  CategoryIcon = () => <span role="img" aria-label="other" className="text-xl">📌</span>;
+              }
+              
+              // Format date for display
+              const expenseDate = new Date(expense.date);
+              const formattedDate = expenseDate.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+              });
+              
+              return (
+                <Card key={expense.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-3">
+                      <div className="flex items-center">
+                        <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center mr-3">
+                          <CategoryIcon />
                         </div>
-                        <Typography variant="h6" className="font-semibold text-right">
-                          {editingCardId === expense.id ? (
-                            <div className="flex items-center">
-                              <TextField
-                                type="number"
-                                value={editCardAmount}
-                                onChange={(e) => setEditCardAmount(e.target.value)}
-                                size="small"
-                                inputProps={{ step: "0.01", min: "0" }}
-                                className="w-24"
-                                variant="standard"
-                                InputProps={{
-                                  disableUnderline: true
-                                }}
-                              />
-                              <IconButton 
-                                size="small" 
-                                color="primary"
-                                onClick={() => handleEditSave(expense.id)}
-                                className="ml-1"
-                              >
-                                <Save className="w-4 h-4" />
-                              </IconButton>
-                            </div>
-                          ) : (
-                            <>{RUPEE_SYMBOL} {parseFloat(expense.amount).toFixed(2)}</>
-                          )}
-                        </Typography>
+                        <div>
+                          <Typography variant="subtitle1" className="font-medium line-clamp-1">
+                            {expense.description || expense.category}
+                          </Typography>
+                          <Typography variant="body2" color="textSecondary" className="text-sm">
+                            {formattedDate}
+                          </Typography>
+                        </div>
                       </div>
-                      
-                      <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
-                        <Chip 
-                          label={expense.category} 
-                          size="small" 
-                          color="primary" 
-                          variant="outlined"
-                        />
-                        <div className="flex space-x-1">
-                          <Tooltip title="Edit Amount">
+                      <Typography variant="h6" className="font-semibold text-right">
+                        {editingCardId === expense.id ? (
+                          <div className="flex items-center">
+                            <TextField
+                              type="number"
+                              value={editCardAmount}
+                              onChange={(e) => setEditCardAmount(e.target.value)}
+                              size="small"
+                              inputProps={{ step: "0.01", min: "0" }}
+                              className="w-24"
+                              variant="standard"
+                              InputProps={{
+                                disableUnderline: true
+                              }}
+                            />
                             <IconButton 
                               size="small" 
                               color="primary"
-                              onClick={() => handleExpenseAction('edit', expense.id)}
+                              onClick={() => handleEditSave(expense.id)}
+                              className="ml-1"
                             >
-                              <Edit2 className="w-4 h-4" />
+                              <Save className="w-4 h-4" />
                             </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete">
-                            <IconButton 
-                              size="small" 
-                              color="error"
-                              onClick={() => handleExpenseAction('delete', expense.id)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </IconButton>
-                          </Tooltip>
-                        </div>
+                          </div>
+                        ) : (
+                          <>{RUPEE_SYMBOL} {parseFloat(expense.amount).toFixed(2)}</>
+                        )}
+                      </Typography>
+                    </div>
+                    
+                    <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+                      <Chip 
+                        label={expense.category} 
+                        size="small" 
+                        color="primary" 
+                        variant="outlined"
+                      />
+                      <div className="flex space-x-1">
+                        <Tooltip title="Edit Amount">
+                          <IconButton 
+                            size="small" 
+                            color="primary"
+                            onClick={() => handleExpenseAction('edit', expense.id)}
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Delete">
+                          <IconButton 
+                            size="small" 
+                            color="error"
+                            onClick={() => handleExpenseAction('delete', expense.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </IconButton>
+                        </Tooltip>
                       </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : (
-            <Alert severity="info" className="mt-4">
-              <div className="flex items-center">
-                <AlertCircle className="mr-2" size={20} />
-                No transactions found for this period. Add your first expense or select a different month.
-              </div>
-            </Alert>
-          )}
-        </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
 
         {loading && (
           <Box className="flex justify-center my-8">
@@ -883,26 +978,28 @@ const Dashboard = () => {
             <Card>
               <CardContent>
                 <div className="flex justify-between items-center mb-4">
-                  <Typography variant="h6">
-                    Monthly Spending Trend
-                  </Typography>
+                  <Typography variant="h6">Monthly Spending Trend</Typography>
                   <Tooltip title="Shows your spending patterns over time">
                     <InfoIcon fontSize="small" color="action" />
                   </Tooltip>
                 </div>
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={Object.entries(analysis.monthly_totals || {}).map(([month, amount]) => ({
-                    month,
-                    amount
-                  }))}>
+                  <LineChart
+                    data={Object.entries(analysis.monthly_totals || {}).map(
+                      ([month, amount]) => ({
+                        month,
+                        amount,
+                      })
+                    )}
+                  >
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="month" />
                     <YAxis />
                     <RechartsTooltip />
-                    <Line 
-                      type="monotone" 
-                      dataKey="amount" 
-                      stroke="#8884d8" 
+                    <Line
+                      type="monotone"
+                      dataKey="amount"
+                      stroke="#8884d8"
                       name="Spending"
                     />
                   </LineChart>
@@ -913,9 +1010,7 @@ const Dashboard = () => {
             <Card>
               <CardContent>
                 <div className="flex justify-between items-center mb-4">
-                  <Typography variant="h6">
-                    Expense Categories
-                  </Typography>
+                  <Typography variant="h6">Expense Categories</Typography>
                   <Tooltip title="Breakdown of your spending by category">
                     <InfoIcon fontSize="small" color="action" />
                   </Tooltip>
@@ -923,20 +1018,29 @@ const Dashboard = () => {
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
-                      data={Object.entries(analysis.category_totals || {}).map(([category, value]) => ({
-                        name: category,
-                        value
-                      }))}
+                      data={Object.entries(analysis.category_totals || {}).map(
+                        ([category, value]) => ({
+                          name: category,
+                          value,
+                        })
+                      )}
                       cx="50%"
                       cy="50%"
                       outerRadius={100}
                       fill="#8884d8"
                       dataKey="value"
-                      label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                      label={({ name, percent }) =>
+                        `${name}: ${(percent * 100).toFixed(0)}%`
+                      }
                     >
-                      {Object.entries(analysis.category_totals || {}).map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
+                      {Object.entries(analysis.category_totals || {}).map(
+                        (entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={COLORS[index % COLORS.length]}
+                          />
+                        )
+                      )}
                     </Pie>
                     <RechartsTooltip />
                   </PieChart>
@@ -947,33 +1051,43 @@ const Dashboard = () => {
             <Card>
               <CardContent>
                 <div className="flex justify-between items-center mb-4">
-                  <Typography variant="h6">
-                    Spending Insights
-                  </Typography>
+                  <Typography variant="h6">Spending Insights</Typography>
                   <Tooltip title="Key metrics about your financial activity">
                     <InfoIcon fontSize="small" color="action" />
                   </Tooltip>
                 </div>
                 <List dense>
                   <ListItem>
-                    <ListItemIcon><TrendingUp color={analysis.total_spent > 1000 ? "red" : "green"} /></ListItemIcon>
-                    <ListItemText 
-                      primary="Total Spent" 
-                      secondary={`${RUPEE_SYMBOL}${analysis.total_spent?.toFixed(2)}`} 
+                    <ListItemIcon>
+                      <TrendingUp
+                        color={analysis.total_spent > 1000 ? "red" : "green"}
+                      />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Total Spent"
+                      secondary={`${RUPEE_SYMBOL}${analysis.total_spent?.toFixed(
+                        2
+                      )}`}
                     />
                   </ListItem>
                   <ListItem>
-                    <ListItemIcon><TrendingDown /></ListItemIcon>
-                    <ListItemText 
-                      primary="Average Expense" 
-                      secondary={`${RUPEE_SYMBOL}${analysis.average_expense?.toFixed(2)}`} 
+                    <ListItemIcon>
+                      <TrendingDown />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Average Expense"
+                      secondary={`${RUPEE_SYMBOL}${analysis.average_expense?.toFixed(
+                        2
+                      )}`}
                     />
                   </ListItem>
                   <ListItem>
-                    <ListItemIcon><LineChartIcon /></ListItemIcon>
-                    <ListItemText 
-                      primary="Transaction Count" 
-                      secondary={analysis.transaction_count} 
+                    <ListItemIcon>
+                      <LineChartIcon />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Transaction Count"
+                      secondary={analysis.transaction_count}
                     />
                   </ListItem>
                 </List>
@@ -984,7 +1098,7 @@ const Dashboard = () => {
 
         {/* ExpenseManager for handling data operations */}
         <div className="hidden">
-          <ExpenseManager 
+          <ExpenseManager
             id="expense-manager"
             key={`expense-manager-${selectedMonth}`}
             expenses={filteredExpenses}
@@ -1000,6 +1114,8 @@ const Dashboard = () => {
             }}
           />
         </div>
+
+        <ClearAllConfirmationDialog />
       </div>
     </div>
   );
