@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   Button, TextField, MenuItem, Dialog, DialogTitle,
   DialogContent, DialogActions, Alert, IconButton,
-  Tooltip, DialogContentText,
+  Tooltip, DialogContentText, Snackbar,
   Table, TableBody, TableCell, TableContainer, 
-  TableHead, TableRow, Paper
+  TableHead, TableRow, Paper, Divider
 } from '@mui/material';
-import { Plus, Edit2, Trash2, Save } from 'lucide-react';
+import { Plus, Edit2, Trash2, Save, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { getFirestore, doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { getFirestore, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 
 const ExpenseManager = ({ 
@@ -23,15 +23,21 @@ const ExpenseManager = ({
   const { user } = useAuth();
   const db = getFirestore();
   
+  // Dialog states
   const [open, setOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  
+  // Status states
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [editAmount, setEditAmount] = useState('');
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [success, setSuccess] = useState(null);
   
+  // Editing states
+  const [editingId, setEditingId] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [expenseToDelete, setExpenseToDelete] = useState(null);
+  
+  // Form data
   const [newExpense, setNewExpense] = useState({
     date: new Date().toISOString().split('T')[0],
     amount: '',
@@ -41,14 +47,8 @@ const ExpenseManager = ({
 
   // Use the categories from props, or fallback to default if not provided
   const expenseCategories = categories || [
-    'Food',
-    'Transportation',
-    'Housing',
-    'Utilities',
-    'Entertainment',
-    'Healthcare',
-    'Shopping',
-    'Other'
+    'Food', 'Transportation', 'Housing', 'Utilities', 
+    'Entertainment', 'Healthcare', 'Shopping', 'Other'
   ];
 
   // Handle dialog close with cleanup
@@ -74,7 +74,7 @@ const ExpenseManager = ({
         handleEditStart(expense);
       }
     }
-  }, [activeExpenseId]);
+  }, [activeExpenseId, expenses]);
   
   useEffect(() => {
     if (showDeleteDialog && activeExpenseId) {
@@ -83,9 +83,21 @@ const ExpenseManager = ({
         handleDelete(expense);
       }
     }
-  }, [showDeleteDialog, activeExpenseId]);
+  }, [showDeleteDialog, activeExpenseId, expenses]);
 
-  // Deduplication function
+  // Reset form when closing dialog
+  useEffect(() => {
+    if (!open) {
+      setNewExpense({
+        date: new Date().toISOString().split('T')[0],
+        amount: '',
+        category: '',
+        description: ''
+      });
+    }
+  }, [open]);
+
+  // Helper Functions
   const deduplicateExpenses = (expenseList) => {
     const seen = new Map();
     return expenseList.filter(expense => {
@@ -96,6 +108,15 @@ const ExpenseManager = ({
     });
   };
 
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 2
+    }).format(amount);
+  };
+
+  // CRUD Operations
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
@@ -127,15 +148,6 @@ const ExpenseManager = ({
         return;
       }
   
-      // Safe timestamp creation
-      let currentTimestamp;
-      try {
-        currentTimestamp = new Date().toISOString();
-      } catch (err) {
-        console.error('Error creating timestamp:', err);
-        currentTimestamp = new Date(0).toISOString();
-      }
-  
       // Create expense object with validated data
       const expenseToAdd = {
         date: formattedDate,
@@ -144,16 +156,9 @@ const ExpenseManager = ({
         description: newExpense.description || '',
         id: uuidv4(),
         userId: user.uid,
-        createdAt: currentTimestamp,
-        updatedAt: currentTimestamp
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
-  
-      // Verify all object properties are valid before saving
-      for (const [key, value] of Object.entries(expenseToAdd)) {
-        if (value === undefined || value === null || value === NaN) {
-          throw new Error(`Invalid value for ${key}`);
-        }
-      }
   
       const updatedExpenses = deduplicateExpenses([...expenses, expenseToAdd]);
   
@@ -165,7 +170,7 @@ const ExpenseManager = ({
       onUpdate(updatedExpenses);
       setSuccess(`Expense added successfully: ${formatCurrency(parsedAmount)}`);
   
-      // Reset form
+      // Reset form and close dialog
       setNewExpense({
         date: new Date().toISOString().split('T')[0],
         amount: '',
@@ -190,6 +195,7 @@ const ExpenseManager = ({
 
   const confirmDelete = async () => {
     try {
+      setLoading(true);
       if (!expenseToDelete?.id) {
         setError('No expense selected for deletion');
         handleDialogClose();
@@ -208,6 +214,8 @@ const ExpenseManager = ({
     } catch (err) {
       setError('Failed to delete expense');
       console.error('Error deleting expense:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -219,6 +227,7 @@ const ExpenseManager = ({
 
   const handleEditSave = async (expenseId) => {
     try {
+      setLoading(true);
       if (!editAmount || isNaN(parseFloat(editAmount))) {
         setError('Please enter a valid amount');
         return;
@@ -226,7 +235,11 @@ const ExpenseManager = ({
 
       const updatedExpenses = expenses.map(expense => 
         expense?.id === expenseId 
-          ? { ...expense, amount: parseFloat(editAmount) }
+          ? { 
+              ...expense, 
+              amount: parseFloat(editAmount),
+              updatedAt: new Date().toISOString()
+            }
           : expense
       );
 
@@ -237,7 +250,11 @@ const ExpenseManager = ({
         const allExpenses = docSnap.data().expenses || [];
         const updatedAllExpenses = allExpenses.map(expense => 
           expense?.id === expenseId 
-            ? { ...expense, amount: parseFloat(editAmount) }
+            ? { 
+                ...expense, 
+                amount: parseFloat(editAmount),
+                updatedAt: new Date().toISOString()
+              }
             : expense
         );
         
@@ -253,15 +270,9 @@ const ExpenseManager = ({
     } catch (err) {
       setError('Failed to update expense');
       console.error('Error updating expense:', err);
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 2
-    }).format(amount);
   };
 
   // Sort expenses by date (most recent first)
@@ -361,7 +372,13 @@ const ExpenseManager = ({
           
           <DialogActions>
             <Button onClick={handleDialogClose}>Cancel</Button>
-            <Button type="submit" variant="contained">Add</Button>
+            <Button 
+              type="submit" 
+              variant="contained" 
+              disabled={loading}
+            >
+              {loading ? 'Adding...' : 'Add'}
+            </Button>
           </DialogActions>
         </form>
       </Dialog>
@@ -371,7 +388,12 @@ const ExpenseManager = ({
         open={deleteConfirmOpen}
         onClose={handleDialogClose}
       >
-        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogTitle>
+          <div className="flex items-center text-red-600">
+            <AlertTriangle className="w-5 h-5 mr-2" />
+            Confirm Delete
+          </div>
+        </DialogTitle>
         <DialogContent>
           <div className="space-y-4">
             <DialogContentText>
@@ -404,6 +426,7 @@ const ExpenseManager = ({
         <DialogActions>
           <Button 
             onClick={handleDialogClose}
+            disabled={loading}
           >
             Cancel
           </Button>
@@ -411,8 +434,9 @@ const ExpenseManager = ({
             onClick={confirmDelete} 
             color="error" 
             variant="contained"
+            disabled={loading}
           >
-            Delete
+            {loading ? 'Deleting...' : 'Delete'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -439,21 +463,23 @@ const ExpenseManager = ({
                   <TableCell>{expense.category}</TableCell>
                   <TableCell>
                     {editingId === expense.id ? (
-                      <TextField
-                        type="number"
-                        value={editAmount}
-                        onChange={(e) => setEditAmount(e.target.value)}
-                        size="small"
-                        inputProps={{ 
-                          step: "0.01",
-                          min: "0"
-                        }}
-                        className="w-24"
-                        variant="standard"
-                        InputProps={{
-                          disableUnderline: true
-                        }}
-                      />
+                      <div className="flex items-center">
+                        <TextField
+                          type="number"
+                          value={editAmount}
+                          onChange={(e) => setEditAmount(e.target.value)}
+                          size="small"
+                          inputProps={{ 
+                            step: "0.01",
+                            min: "0"
+                          }}
+                          className="w-24"
+                          variant="standard"
+                          InputProps={{
+                            startAdornment: <span className="text-gray-500 mr-1">{RUPEE_SYMBOL}</span>,
+                          }}
+                        />
+                      </div>
                     ) : (
                       formatCurrency(expense.amount)
                     )}
@@ -467,6 +493,7 @@ const ExpenseManager = ({
                             onClick={() => handleEditSave(expense.id)}
                             size="small"
                             color="primary"
+                            disabled={loading}
                           >
                             <Save className="w-4 h-4" />
                           </IconButton>
@@ -479,6 +506,7 @@ const ExpenseManager = ({
                             color="primary"
                             data-expense-id={expense.id}
                             data-action="edit"
+                            disabled={loading}
                           >
                             <Edit2 className="w-4 h-4" />
                           </IconButton>
@@ -491,6 +519,7 @@ const ExpenseManager = ({
                           color="error"
                           data-expense-id={expense.id}
                           data-action="delete"
+                          disabled={loading}
                         >
                           <Trash2 className="w-4 h-4" />
                         </IconButton>
