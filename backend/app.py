@@ -132,7 +132,10 @@ class FinanceAI:
         """Extract time-based features from date column"""
         # Create a copy to avoid modifying the original
         df_features = df.copy()
-        
+        required_columns = ['date', 'amount', 'category']
+        for col in df_features.columns:
+            if col not in required_columns:
+                df_features = df_features.drop(col, axis=1)
         # Ensure date column is datetime
         if not pd.api.types.is_datetime64_any_dtype(df_features['date']):
             df_features['date'] = pd.to_datetime(df_features['date'])
