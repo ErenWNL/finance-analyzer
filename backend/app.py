@@ -91,10 +91,16 @@ class FinanceAI:
             return
             
         try:
+            feature_columns_path = os.path.join(current_dir, 'models', f'feature_columns_{self.user_id}.joblib')
+            if os.path.exists(feature_columns_path):
+                self.feature_columns = joblib.load(feature_columns_path)
+                logger.info(f"Loaded feature columns for user {self.user_id}")
+                
             if os.path.exists(self.model_path) and os.path.exists(self.scaler_path):
                 self.expense_predictor = joblib.load(self.model_path)
                 self.scaler = joblib.load(self.scaler_path)
                 logger.info(f"Loaded prediction models for user {self.user_id}")
+
                 
                 # Load category models
                 if os.path.exists(self.category_models_path):
@@ -111,23 +117,28 @@ class FinanceAI:
         """Save prediction models for future use"""
         if not self.user_id or not self.expense_predictor:
             return
-            
+        
         try:
             # Save main predictor and scaler
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
             joblib.dump(self.expense_predictor, self.model_path)
             joblib.dump(self.scaler, self.scaler_path)
-            
-            # Save category models
+        
+        # Save feature columns if available
+            if self.feature_columns is not None:
+                feature_columns_path = os.path.join(current_dir, 'models', f'feature_columns_{self.user_id}.joblib')
+                joblib.dump(self.feature_columns, feature_columns_path)
+        
+        # Save category models
             os.makedirs(self.category_models_path, exist_ok=True)
             for category, model in self.category_predictors.items():
                 model_path = os.path.join(self.category_models_path, f'{category}.joblib')
                 joblib.dump(model, model_path)
-            
+        
             logger.info(f"Saved prediction models for user {self.user_id}")
         except Exception as e:
             logger.error(f"Error saving models: {str(e)}")
-
+            
     def _prepare_time_features(self, df):
         """Extract time-based features from date column"""
         # Create a copy to avoid modifying the original
@@ -760,7 +771,39 @@ def analyze_finances():
                 finance_ai = FinanceAI(user_id)
                 ai_analysis = finance_ai.analyze_spending_patterns(df)
                 if ai_analysis:
-                    analysis_result['ai_insights'] = ai_analysis
+                    # Sanitize AI analysis results for Firebase storage
+                        def sanitize_for_firebase(item):
+                            if isinstance(item, (np.int64, np.int32, np.int16, np.int8,
+                                                np.uint64, np.uint32, np.uint16, np.uint8)):
+                                return int(item)
+                            elif isinstance(item, (np.float64, np.float32, np.float16)):
+                                return float(item)
+                            elif isinstance(item, (np.ndarray,)):
+                                return sanitize_for_firebase(item.tolist())
+                            elif isinstance(item, dict):
+                                return {k: sanitize_for_firebase(v) for k, v in item.items()}
+                            elif isinstance(item, list):
+                                return [sanitize_for_firebase(i) for i in item]
+                            else:
+                                return item
+                        def ensure_string_keys(data):
+                            """Convert all dict keys to strings to ensure Firebase compatibility"""
+                            if isinstance(data, dict):
+                                return {str(k): ensure_string_keys(v) for k, v in data.items()}
+                            elif isinstance(data, list):
+                                return [ensure_string_keys(item) for item in data]
+                            else:
+                                return data
+    
+                        sanitized_analysis = {}
+                        for key, value in ai_analysis.items():
+                            sanitized_analysis[key] = sanitize_for_firebase(value)
+            
+                        # Ensure all keys are strings for Firebase
+                        sanitized_analysis = ensure_string_keys(sanitized_analysis)
+            
+                        analysis_result['ai_insights'] = sanitized_analysis
+                
             except Exception as e:
                 logger.error(f"Error in AI analysis: {str(e)}")
                 # Continue without AI insights if there's an error
