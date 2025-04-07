@@ -12,10 +12,10 @@ import {
   IconButton
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera } from 'lucide-react';
+import axios from 'axios';
 
 const Profile = () => {
   const { user } = useAuth();
@@ -33,7 +33,6 @@ const Profile = () => {
     photoURL: ''
   });
 
-  const storage = getStorage();
   const db = getFirestore();
 
   useEffect(() => {
@@ -49,9 +48,20 @@ const Profile = () => {
       const docSnap = await getDoc(docRef);
       
       if (docSnap.exists()) {
+        const data = docSnap.data();
+        // Try to load profile photo from MongoDB
+        try {
+          const response = await axios.get(`http://localhost:5000/api/profile/photo/${user.uid}`);
+          if (response.data.photo) {
+            data.photoURL = `data:image/jpeg;base64,${response.data.photo}`;
+          }
+        } catch (err) {
+          console.error('Error loading profile photo:', err);
+        }
+        
         setProfileData(prevData => ({
           ...prevData,
-          ...docSnap.data()
+          ...data
         }));
       }
     } catch (err) {
@@ -70,15 +80,24 @@ const Profile = () => {
       setLoading(true);
       setError('');
       
-      const storageRef = ref(storage, `profile-photos/${user.uid}`);
-      await uploadBytes(storageRef, file);
-      const photoURL = await getDownloadURL(storageRef);
-      
-      setProfileData(prev => ({ ...prev, photoURL }));
-      setSuccess('Photo uploaded successfully!');
+      const formData = new FormData();
+      formData.append('photo', file);
+      formData.append('userId', user.uid);
+
+      const response = await axios.post('http://localhost:5000/api/profile/photo', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      if (response.data.photo) {
+        const photoURL = `data:image/jpeg;base64,${response.data.photo}`;
+        setProfileData(prev => ({ ...prev, photoURL }));
+        setSuccess('Photo uploaded successfully!');
+      }
     } catch (err) {
       console.error('Error uploading photo:', err);
-      setError('Failed to upload photo');
+      setError('Failed to upload photo. Please try again.');
     } finally {
       setLoading(false);
     }

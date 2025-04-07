@@ -14,6 +14,11 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
+from pymongo import MongoClient
+from bson import ObjectId
+import base64
+from io import BytesIO
+from PIL import Image
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -39,7 +44,20 @@ except Exception as e:
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
+
+# Configure CORS
+CORS(app, 
+     resources={r"/api/*": {"origins": "http://localhost:5173"}},
+     supports_credentials=True)
+
+# Initialize MongoDB
+try:
+    mongo_client = MongoClient(os.getenv('MONGODB_URI'))
+    db = mongo_client[os.getenv('MONGODB_DB_NAME', 'finance_analyzer')]
+    logger.info("Successfully connected to MongoDB")
+except Exception as e:
+    logger.error(f"Error connecting to MongoDB: {str(e)}")
+    raise
 
 # Initialize Firebase
 try:
@@ -61,6 +79,15 @@ try:
 except Exception as e:
     logger.error(f"Error initializing Firebase: {str(e)}")
     raise
+
+# Add CORS headers to all responses
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 class FinanceAI:
     """
@@ -973,6 +1000,88 @@ def health_check():
         'version': '1.0.0'
     })
 
+@app.route('/api/profile/photo', methods=['POST', 'OPTIONS'])
+def upload_profile_photo():
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
+        
+    try:
+        user_id = request.form.get('userId')
+        if not user_id:
+            response = jsonify({'error': 'User ID is required'})
+            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+            return response, 400
+
+        if 'photo' not in request.files:
+            response = jsonify({'error': 'No photo provided'})
+            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+            return response, 400
+
+        photo = request.files['photo']
+        if photo.filename == '':
+            response = jsonify({'error': 'No selected file'})
+            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+            return response, 400
+
+        # Convert image to base64
+        img = Image.open(photo)
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+
+        # Store in MongoDB
+        photo_data = {
+            'userId': user_id,
+            'photo': img_str,
+            'uploadedAt': datetime.utcnow()
+        }
+        
+        # Update or insert the photo
+        db.profile_photos.update_one(
+            {'userId': user_id},
+            {'$set': photo_data},
+            upsert=True
+        )
+
+        response = jsonify({'message': 'Photo uploaded successfully', 'photo': img_str})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+        return response, 200
+    except Exception as e:
+        logger.error(f"Error uploading photo: {str(e)}")
+        response = jsonify({'error': str(e)})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+        return response, 500
+
+@app.route('/api/profile/photo/<user_id>', methods=['GET', 'OPTIONS'])
+def get_profile_photo(user_id):
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
+        
+    try:
+        photo_data = db.profile_photos.find_one({'userId': user_id})
+        if not photo_data:
+            response = jsonify({'error': 'Photo not found'})
+            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+            return response, 404
+        
+        response = jsonify({'photo': photo_data['photo']})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+        return response, 200
+    except Exception as e:
+        logger.error(f"Error retrieving photo: {str(e)}")
+        response = jsonify({'error': str(e)})
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
+        return response, 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
