@@ -19,6 +19,7 @@ from bson import ObjectId
 import base64
 from io import BytesIO
 from PIL import Image
+from firebase_admin import auth
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -1043,6 +1044,36 @@ def get_profile_photo(user_id):
     except Exception as e:
         logger.error(f"Error retrieving photo: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def forgot_password():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        
+        if not email:
+            return jsonify({'message': 'Email is required'}), 400
+            
+        # Check if user exists
+        user = auth.get_user_by_email(email)
+        
+        # Generate password reset link
+        reset_link = auth.generate_password_reset_link(email)
+        
+        # TODO: Send email with reset link
+        # For now, we'll just return the reset link
+        # In production, you should send this link via email
+        
+        return jsonify({
+            'message': 'Password reset instructions have been sent to your email',
+            'reset_link': reset_link  # Remove this in production
+        }), 200
+        
+    except auth.UserNotFoundError:
+        return jsonify({'message': 'No user found with this email address'}), 404
+    except Exception as e:
+        print(f"Error in forgot_password: {str(e)}")
+        return jsonify({'message': 'An error occurred while processing your request'}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

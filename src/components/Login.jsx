@@ -6,13 +6,13 @@ import {
   Button, 
   Typography, 
   Alert,
-  Link,
   InputAdornment,
   IconButton,
   Box,
-  CircularProgress
+  CircularProgress,
+  Container
 } from '@mui/material';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Visibility, VisibilityOff, Email, Lock } from '@mui/icons-material';
 
@@ -45,6 +45,7 @@ const Login = () => {
       navigate('/dashboard');
     } catch (err) {
       setError('Invalid email or password. Please try again.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -55,19 +56,19 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <Card className="max-w-md w-full shadow-lg rounded-lg">
+    <Container maxWidth="sm" className="min-h-screen flex items-center justify-center py-12 px-4">
+      <Card className="w-full shadow-lg rounded-lg">
         <CardContent className="p-6">
-          <div className="text-center mb-6">
-            <Typography component="h1" variant="h5" className="font-medium">
+          <Box sx={{ textAlign: 'center', mb: 4 }}>
+            <Typography component="h1" variant="h5" sx={{ fontWeight: 500 }}>
               Sign in to your account
             </Typography>
-          </div>
+          </Box>
           
           {error && (
             <Alert 
               severity="error" 
-              className="mb-4"
+              sx={{ mb: 3 }}
               onClose={() => setError('')}
             >
               {error}
@@ -77,14 +78,14 @@ const Login = () => {
           {successMessage && (
             <Alert 
               severity="success" 
-              className="mb-4"
+              sx={{ mb: 3 }}
               onClose={() => setSuccessMessage('')}
             >
               {successMessage}
             </Alert>
           )}
           
-          <form className="space-y-4" onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit}>
             <TextField
               label="Email Address"
               type="email"
@@ -94,6 +95,7 @@ const Login = () => {
               fullWidth
               autoComplete="email"
               variant="outlined"
+              margin="normal"
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -112,6 +114,7 @@ const Login = () => {
               fullWidth
               autoComplete="current-password"
               variant="outlined"
+              margin="normal"
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -132,11 +135,13 @@ const Login = () => {
               }}
             />
             
-            <div className="text-right">
-              <Link href="/forgot-password" variant="body2" className="text-blue-600 hover:text-blue-800">
-                Forgot password?
+            <Box sx={{ textAlign: 'right', mt: 1 }}>
+              <Link to="/forgot-password" style={{ textDecoration: 'none' }}>
+                <Typography variant="body2" color="primary">
+                  Forgot password?
+                </Typography>
               </Link>
-            </div>
+            </Box>
             
             <Button
               type="submit"
@@ -144,7 +149,7 @@ const Login = () => {
               variant="contained"
               color="primary"
               disabled={loading}
-              className="mt-4 py-2"
+              sx={{ mt: 3, mb: 2, py: 1.5 }}
               disableElevation
             >
               {loading ? (
@@ -154,22 +159,20 @@ const Login = () => {
               )}
             </Button>
             
-            <div className="text-center mt-4">
-              <Typography variant="body2" color="textSecondary">
+            <Box sx={{ textAlign: 'center', mt: 2 }}>
+              <Typography variant="body2" color="text.secondary">
                 Don't have an account?{' '}
-                <Link 
-                  href="/signup" 
-                  variant="body2"
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  Sign Up
+                <Link to="/signup" style={{ textDecoration: 'none' }}>
+                  <Typography variant="body2" component="span" color="primary">
+                    Sign Up
+                  </Typography>
                 </Link>
               </Typography>
-            </div>
+            </Box>
           </form>
         </CardContent>
       </Card>
-    </div>
+    </Container>
   );
 };
 
