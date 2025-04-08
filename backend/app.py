@@ -45,10 +45,12 @@ except Exception as e:
 # Initialize Flask app
 app = Flask(__name__)
 
-# Configure CORS
+# Configure CORS - Simple configuration
 CORS(app, 
-     resources={r"/api/*": {"origins": "http://localhost:5173"}},
-     supports_credentials=True)
+     origins=["http://localhost:5173"],
+     allow_credentials=True,
+     supports_credentials=True,
+     resources={r"/api/*": {"origins": "http://localhost:5173"}})
 
 # Initialize MongoDB
 try:
@@ -79,15 +81,6 @@ try:
 except Exception as e:
     logger.error(f"Error initializing Firebase: {str(e)}")
     raise
-
-# Add CORS headers to all responses
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
 
 class FinanceAI:
     """
@@ -1002,31 +995,17 @@ def health_check():
 
 @app.route('/api/profile/photo', methods=['POST', 'OPTIONS'])
 def upload_profile_photo():
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        return response
-        
     try:
         user_id = request.form.get('userId')
         if not user_id:
-            response = jsonify({'error': 'User ID is required'})
-            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-            return response, 400
+            return jsonify({'error': 'User ID is required'}), 400
 
         if 'photo' not in request.files:
-            response = jsonify({'error': 'No photo provided'})
-            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-            return response, 400
+            return jsonify({'error': 'No photo provided'}), 400
 
         photo = request.files['photo']
         if photo.filename == '':
-            response = jsonify({'error': 'No selected file'})
-            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-            return response, 400
+            return jsonify({'error': 'No selected file'}), 400
 
         # Convert image to base64
         img = Image.open(photo)
@@ -1048,40 +1027,22 @@ def upload_profile_photo():
             upsert=True
         )
 
-        response = jsonify({'message': 'Photo uploaded successfully', 'photo': img_str})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        return response, 200
+        return jsonify({'message': 'Photo uploaded successfully', 'photo': img_str}), 200
     except Exception as e:
         logger.error(f"Error uploading photo: {str(e)}")
-        response = jsonify({'error': str(e)})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        return response, 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/profile/photo/<user_id>', methods=['GET', 'OPTIONS'])
 def get_profile_photo(user_id):
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        return response
-        
     try:
         photo_data = db.profile_photos.find_one({'userId': user_id})
         if not photo_data:
-            response = jsonify({'error': 'Photo not found'})
-            response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-            return response, 404
+            return jsonify({'error': 'Photo not found'}), 404
         
-        response = jsonify({'photo': photo_data['photo']})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        return response, 200
+        return jsonify({'photo': photo_data['photo']}), 200
     except Exception as e:
         logger.error(f"Error retrieving photo: {str(e)}")
-        response = jsonify({'error': str(e)})
-        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5173')
-        return response, 500
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

@@ -51,7 +51,13 @@ const Profile = () => {
         const data = docSnap.data();
         // Try to load profile photo from MongoDB
         try {
-          const response = await axios.get(`http://localhost:5000/api/profile/photo/${user.uid}`);
+          const response = await axios.get(`http://localhost:5000/api/profile/photo/${user.uid}`, {
+            withCredentials: true,
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            }
+          });
           if (response.data.photo) {
             data.photoURL = `data:image/jpeg;base64,${response.data.photo}`;
           }
@@ -85,6 +91,7 @@ const Profile = () => {
       formData.append('userId', user.uid);
 
       const response = await axios.post('http://localhost:5000/api/profile/photo', formData, {
+        withCredentials: true,
         headers: {
           'Content-Type': 'multipart/form-data'
         }
