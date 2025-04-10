@@ -10,6 +10,8 @@ import { Plus, Edit2, Trash2, Save, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { getFirestore, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import { getAuth } from 'firebase/auth';
 
 const ExpenseManager = ({ 
   expenses, 
@@ -22,6 +24,7 @@ const ExpenseManager = ({
 }) => {
   const { user } = useAuth();
   const db = getFirestore();
+  const auth = getAuth();
   
   // Dialog states
   const [open, setOpen] = useState(false);
@@ -116,14 +119,62 @@ const ExpenseManager = ({
     }).format(amount);
   };
 
+  // Add a function to auto-categorize a transaction
+  const attemptAutoCategorize = async (transaction) => {
+    // Only attempt to categorize if the category is Uncategorized and there's a description
+    if (transaction.category !== 'Uncategorized' || !transaction.description) {
+      return transaction;
+    }
+
+    try {
+      console.log(`Attempting to auto-categorize transaction: ${transaction.description}`);
+      
+      // Get auth token
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.warn("No authenticated user found for auto-categorization");
+        return transaction;
+      }
+      
+      const idToken = await currentUser.getIdToken();
+      
+      // Call the categorization API
+      const response = await axios.post('/api/categorizer/categorize', 
+        {
+          user_id: user.uid,
+          description: transaction.description
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${idToken}`
+          }
+        }
+      );
+      
+      if (response.data.status === 'success' && response.data.data.category) {
+        console.log(`Successfully categorized as: ${response.data.data.category}`);
+        return {
+          ...transaction,
+          category: response.data.data.category
+        };
+      } else {
+        console.warn("Categorization API did not return a valid category");
+        return transaction;
+      }
+    } catch (err) {
+      console.error('Error auto-categorizing transaction:', err);
+      return transaction;
+    }
+  };
+
   // CRUD Operations
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
   
     try {
-      // Basic validation
-      if (!newExpense.amount || !newExpense.category || !newExpense.date) {
+      // Basic validation - category is no longer required
+      if (!newExpense.amount || !newExpense.date) {
         setError('Please fill in all required fields');
         return;
       }
@@ -149,18 +200,22 @@ const ExpenseManager = ({
       }
   
       // Create expense object with validated data
+      // If category is empty or 'Other', set it to 'Uncategorized' so the AI model will categorize it
       const expenseToAdd = {
         date: formattedDate,
         amount: parsedAmount,
-        category: newExpense.category,
+        category: !newExpense.category || newExpense.category === 'Other' ? 'Uncategorized' : newExpense.category,
         description: newExpense.description || '',
         id: uuidv4(),
         userId: user.uid,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
+      
+      // Try to auto-categorize if it's uncategorized and has a description
+      const categorizedExpense = await attemptAutoCategorize(expenseToAdd);
   
-      const updatedExpenses = deduplicateExpenses([...expenses, expenseToAdd]);
+      const updatedExpenses = deduplicateExpenses([...expenses, categorizedExpense]);
   
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
@@ -168,7 +223,13 @@ const ExpenseManager = ({
       });
   
       onUpdate(updatedExpenses);
-      setSuccess(`Expense added successfully: ${formatCurrency(parsedAmount)}`);
+      
+      // Show appropriate success message
+      if (categorizedExpense.category !== 'Uncategorized' && expenseToAdd.category === 'Uncategorized') {
+        setSuccess(`Expense added and auto-categorized as "${categorizedExpense.category}": ${formatCurrency(parsedAmount)}`);
+      } else {
+        setSuccess(`Expense added successfully: ${formatCurrency(parsedAmount)}`);
+      }
   
       // Reset form and close dialog
       setNewExpense({
@@ -350,8 +411,9 @@ const ExpenseManager = ({
                 value={newExpense.category}
                 onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
                 fullWidth
-                required
+                helperText="Leave empty or select 'Other' for auto-categorization"
               >
+                <MenuItem value="">-- Auto-categorize --</MenuItem>
                 {expenseCategories.map((category) => (
                   <MenuItem key={category} value={category}>
                     {category}

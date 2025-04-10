@@ -26,9 +26,13 @@ import {
   BrainCircuit,
   Calendar,
   Activity,
-  LineChart
+  LineChart,
+  DollarSign
 } from 'lucide-react';
 import PredictionsTab from './PredictionsTab';
+import BudgetRecommendations from './BudgetRecommendations';
+import AnomalyDetection from './AnomalyDetection';
+import TransactionCategorizer from './TransactionCategorizer';
 
 const AIInsights = () => {
   const location = useLocation();
@@ -39,6 +43,264 @@ const AIInsights = () => {
   const [activeTab, setActiveTab] = useState(0);
   
   // currency formatting
+  
+  
+  // Function to calculate real seasonal patterns using transaction data
+  const calculateSeasonalPatterns = (transactions) => {
+    console.log("Calculating real seasonal patterns from", transactions.length, "transactions");
+    
+    // Return default if no transactions
+    if (!transactions || transactions.length < 180) {
+      console.log("Not enough data for seasonal patterns (need 180+ transactions)");
+      return {
+        highest_spending_month: "January",
+        lowest_spending_month: "January",
+        month_spending: {},
+        quarter_spending: {},
+        category_seasons: {},
+        seasonality_strength: 0,
+        year_over_year: { growth: {}, comparison: {} }
+      };
+    }
+    
+    try {
+      // Group transactions by month
+      const monthlyData = {};
+      const monthNames = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      
+      // Initialize monthly data
+      monthNames.forEach((month, index) => {
+        monthlyData[month] = {
+          transactions: [],
+          amount: 0,
+          count: 0,
+          mean: 0,
+          values: []
+        };
+      });
+      
+      // Group transactions by month
+      transactions.forEach(tx => {
+        if (!tx.date || !tx.amount) return;
+        
+        const date = new Date(tx.date);
+        const monthIndex = date.getMonth();
+        const monthName = monthNames[monthIndex];
+        const amount = parseFloat(tx.amount);
+        
+        if (isNaN(amount)) return;
+        
+        monthlyData[monthName].transactions.push(tx);
+        monthlyData[monthName].amount += amount;
+        monthlyData[monthName].count++;
+        monthlyData[monthName].values.push(amount);
+      });
+      
+      // Calculate monthly statistics
+      let highestMonth = monthNames[0];
+      let lowestMonth = monthNames[0];
+      let highestAmount = 0;
+      let lowestAmount = Number.MAX_VALUE;
+      
+      const means = [];
+      
+      monthNames.forEach(month => {
+        const data = monthlyData[month];
+        if (data.count > 0) {
+          data.mean = data.amount / data.count;
+          
+          // Calculate standard deviation
+          const sumSquares = data.values.reduce((sum, val) => sum + Math.pow(val - data.mean, 2), 0);
+          data.std = Math.sqrt(sumSquares / data.count);
+          
+          // Keep track of highest/lowest months
+          if (data.mean > highestAmount) {
+            highestAmount = data.mean;
+            highestMonth = month;
+          }
+          
+          if (data.mean < lowestAmount && data.count > 0) {
+            lowestAmount = data.mean;
+            lowestMonth = month;
+          }
+          
+          means.push(data.mean);
+        }
+      });
+      
+      // Format the month spending data for the component
+      const monthSpending = {};
+      monthNames.forEach(month => {
+        const data = monthlyData[month];
+        if (data.count > 0) {
+          // Calculate confidence interval
+          const ciMargin = 1.96 * (data.std / Math.sqrt(data.count));
+          
+          monthSpending[month] = {
+            mean: data.mean,
+            ci_lower: data.mean - ciMargin,
+            ci_upper: data.mean + ciMargin,
+            confidence: data.count
+          };
+        } else {
+          monthSpending[month] = {
+            mean: 0,
+            ci_lower: 0,
+            ci_upper: 0,
+            confidence: 0
+          };
+        }
+      });
+      
+      // Calculate seasonality strength
+      if (means.length > 0) {
+        const meanOfMeans = means.reduce((sum, val) => sum + val, 0) / means.length;
+        const sumSquaredDiffs = means.reduce((sum, val) => sum + Math.pow(val - meanOfMeans, 2), 0);
+        const stdOfMeans = Math.sqrt(sumSquaredDiffs / means.length);
+        const seasonalityStrength = (stdOfMeans / meanOfMeans) * 100;
+        
+        // Create quarter data
+        const quarterSpending = {
+          Q1: { mean: 0, trend: 0 },
+          Q2: { mean: 0, trend: 0 },
+          Q3: { mean: 0, trend: 0 },
+          Q4: { mean: 0, trend: 0 }
+        };
+        
+        // Calculate quarterly averages
+        const q1Months = ['January', 'February', 'March'];
+        const q2Months = ['April', 'May', 'June'];
+        const q3Months = ['July', 'August', 'September'];
+        const q4Months = ['October', 'November', 'December'];
+        
+        [
+          { quarter: 'Q1', months: q1Months },
+          { quarter: 'Q2', months: q2Months },
+          { quarter: 'Q3', months: q3Months },
+          { quarter: 'Q4', months: q4Months }
+        ].forEach(q => {
+          let sum = 0;
+          let count = 0;
+          
+          q.months.forEach(month => {
+            if (monthlyData[month].count > 0) {
+              sum += monthlyData[month].mean;
+              count++;
+            }
+          });
+          
+          quarterSpending[q.quarter].mean = count > 0 ? sum / count : 0;
+        });
+        
+        // Create category analysis
+        const categorySeasons = {};
+        const categories = {};
+        
+        // Group by category
+        transactions.forEach(tx => {
+          if (!tx.category) return;
+          
+          if (!categories[tx.category]) {
+            categories[tx.category] = {
+              transactions: [],
+              monthlyData: {}
+            };
+            
+            // Initialize monthly data for category
+            monthNames.forEach(month => {
+              categories[tx.category].monthlyData[month] = {
+                amount: 0,
+                count: 0,
+                mean: 0
+              };
+            });
+          }
+          
+          categories[tx.category].transactions.push(tx);
+          
+          // Group by month
+          if (tx.date) {
+            const date = new Date(tx.date);
+            const monthName = monthNames[date.getMonth()];
+            
+            if (parseFloat(tx.amount)) {
+              categories[tx.category].monthlyData[monthName].amount += parseFloat(tx.amount);
+              categories[tx.category].monthlyData[monthName].count++;
+            }
+          }
+        });
+        
+        // Calculate monthly means for each category
+        Object.keys(categories).forEach(category => {
+          if (categories[category].transactions.length < 20) return;
+          
+          const catData = categories[category];
+          
+          // Calculate monthly means
+          monthNames.forEach(month => {
+            const monthData = catData.monthlyData[month];
+            monthData.mean = monthData.count > 0 ? monthData.amount / monthData.count : 0;
+          });
+          
+          // Find peak and low months
+          let peakMonth = monthNames[0];
+          let lowMonth = monthNames[0];
+          let peakMean = 0;
+          let lowMean = Number.MAX_VALUE;
+          
+          monthNames.forEach(month => {
+            const mean = catData.monthlyData[month].mean;
+            
+            if (mean > peakMean && catData.monthlyData[month].count > 0) {
+              peakMean = mean;
+              peakMonth = month;
+            }
+            
+            if (mean < lowMean && catData.monthlyData[month].count > 0) {
+              lowMean = mean;
+              lowMonth = month;
+            }
+          });
+          
+          categorySeasons[category] = {
+            peak_month: peakMonth,
+            low_month: lowMonth,
+            peak_spending: peakMean,
+            low_spending: lowMean,
+            seasonality_index: {}
+          };
+        });
+        
+        // Return the full patterns object
+        return {
+          highest_spending_month: highestMonth,
+          lowest_spending_month: lowestMonth,
+          month_spending: monthSpending,
+          quarter_spending: quarterSpending,
+          category_seasons: categorySeasons,
+          seasonality_strength: seasonalityStrength,
+          year_over_year: { growth: {}, comparison: {} } // Simplified
+        };
+      }
+    } catch (error) {
+      console.error("Error calculating seasonal patterns:", error);
+    }
+    
+    // Return default on error
+    return {
+      highest_spending_month: "January",
+      lowest_spending_month: "January",
+      month_spending: {},
+      quarter_spending: {},
+      category_seasons: {},
+      seasonality_strength: 0,
+      year_over_year: { growth: {}, comparison: {} }
+    };
+  };
+
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
@@ -50,14 +312,84 @@ const AIInsights = () => {
   useEffect(() => {
     // Check if data exists in location state
     if (location.state?.data) {
-      setData(location.state.data);
-      setLoading(false);
-    } else if (location.state?.insights) {
-      // Legacy support for old format
-      setData({ ai_insights: location.state.insights });
+      console.log('Received AI insights data:', location.state.data);
+      
+      // Check if expenses were passed correctly
+      if (location.state.data.expenses) {
+        console.log(`Received ${location.state.data.expenses.length} expenses`);
+        
+        // Check for uncategorized transactions
+        const uncategorized = location.state.data.expenses.filter(
+          tx => !tx.category || tx.category === '' || 
+                tx.category === 'Uncategorized' || 
+                tx.category === 'Other'
+        );
+        console.log(`Found ${uncategorized.length} uncategorized expenses`, uncategorized);
+      } else {
+        console.warn('No expenses array in data');
+      }
+      
+      // Debug seasonal patterns
+      console.log('Seasonal patterns received:', location.state.data.seasonal_patterns);
+      console.log('Seasonal patterns type:', typeof location.state.data.seasonal_patterns);
+      console.log('Is Array?', Array.isArray(location.state.data.seasonal_patterns));
+      
+      // Create default seasonal data generator function
+      const createDefaultSeasonalData = () => {
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                            'July', 'August', 'September', 'October', 'November', 'December'];
+        const monthSpending = {};
+        
+        // Create default data for each month
+        monthNames.forEach(month => {
+          monthSpending[month] = {
+            mean: 0.0,
+            ci_lower: 0.0,
+            ci_upper: 0.0,
+            confidence: 0.0
+          };
+        });
+        
+        // Create default quarter data
+        const quarterSpending = {};
+        for (let q = 1; q <= 4; q++) {
+          quarterSpending[`Q${q}`] = {
+            mean: 0.0,
+            trend: 0.0
+          };
+        }
+        
+        return {
+          highest_spending_month: monthNames[0],
+          lowest_spending_month: monthNames[0],
+          month_spending: monthSpending,
+          quarter_spending: quarterSpending,
+          category_seasons: {},
+          seasonality_strength: 0.0,
+          year_over_year: {
+            growth: {},
+            comparison: {}
+          }
+        };
+      };
+      
+      // Ensure all required fields are present
+      const processedData = {
+        ai_insights: location.state.data.ai_insights || {},
+        transaction_count: location.state.data.transaction_count || 0,
+        spending_insights: location.state.data.spending_insights || [],
+        spending_velocity: location.state.data.spending_velocity || {},
+        future_predictions: location.state.data.future_predictions || [],
+        anomalous_transactions: location.state.data.anomalous_transactions || [],
+                seasonal_patterns: calculateSeasonalPatterns(location.state.data.expenses || []),
+        models_trained: location.state.data.models_trained || false,
+        expenses: location.state.data.expenses || [] // Store expenses in data
+      };
+      setData(processedData);
       setLoading(false);
     } else {
-      setError("No insights data available");
+      console.error('No insights data available in location state');
+      setError("No insights data available. Please analyze your expenses first.");
       setLoading(false);
     }
   }, [location.state]);
@@ -69,6 +401,32 @@ const AIInsights = () => {
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
   };
+
+  // Add this handler for when transactions are categorized
+  const handleCategorizedTransactions = (updatedTransactions) => {
+    if (!updatedTransactions || updatedTransactions.length === 0) {
+      console.error('No transactions received from categorizer');
+      return;
+    }
+    
+    console.log(`Received ${updatedTransactions.length} transactions from categorizer`);
+    
+    // Calculate how many were actually categorized (for user feedback)
+    const categorizedCount = updatedTransactions.filter(tx => 
+      tx.category && tx.category !== 'Uncategorized' && tx.category !== 'Other'
+    ).length;
+    
+    console.log(`${categorizedCount} transactions have categories other than Uncategorized/Other`);
+    
+    // Navigate back to dashboard with the updated transactions
+    navigate('/dashboard', { 
+      state: { 
+        categorizedTransactions: updatedTransactions,
+        message: `Successfully categorized ${categorizedCount} transactions`
+      }
+    });
+  };
+  
 
   // Show loading state
   if (loading) {
@@ -96,7 +454,9 @@ const AIInsights = () => {
                 {error || "No insights available"}
               </Typography>
               <Typography variant="body2" className="text-center mb-4">
-                We couldn't find any AI insights for your expenses. Please make sure you have enough transaction data for analysis.
+                {error === "No insights data available. Please analyze your expenses first." 
+                  ? "Please go back to the dashboard and analyze your expenses to view AI insights."
+                  : "We couldn't find any AI insights for your expenses. Please make sure you have enough transaction data for analysis."}
               </Typography>
               <Button
                 variant="contained"
@@ -122,7 +482,7 @@ const AIInsights = () => {
 
   // Components for each tab
   const renderInsightsTab = () => (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Spending Insights Section */}
       {insights.spending_insights?.length > 0 && (
         <Card className="border-l-4 border-green-500">
@@ -355,50 +715,39 @@ const AIInsights = () => {
           </Typography>
         </CardContent>
       </Card>
+
+      {/* Budget Recommendations Card */}
+      <Card className="border-l-4 border-green-500">
+        <CardContent className="p-6">
+          <Typography variant="h6" className="text-green-700 mb-3 flex items-center">
+            <DollarSign className="w-5 h-5 mr-2" />
+            Smart Budget Recommendations
+          </Typography>
+          
+          <Typography variant="body1" className="mb-4">
+            Our AI analyzes your spending patterns to provide personalized budget recommendations
+            that help you achieve your financial goals while maintaining your lifestyle.
+          </Typography>
+          
+          <Box className="mt-4 text-center">
+            <Button
+              variant="outlined"
+              color="primary"
+              size="small"
+              onClick={() => setActiveTab(4)}
+            >
+              View Budget Recommendations
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
     </div>
   );
 
   const renderAnomaliesTab = () => {
     // Anomalies Section
     return insights.anomalies?.length > 0 ? (
-      <Card>
-        <CardContent className="p-6">
-          <Typography variant="h6" className="text-red-700 mb-3 flex items-center">
-            <AlertCircle className="w-5 h-5 mr-2" />
-            Unusual Spending Patterns
-          </Typography>
-          <Typography variant="body2" className="mb-4 text-gray-700">
-            Our AI has detected the following transactions as potentially unusual based on your spending history.
-            These were identified using an Isolation Forest machine learning algorithm.
-          </Typography>
-          <List>
-            {insights.anomalies.map((anomaly, index) => (
-              <ListItem key={index} className="border-b border-red-100 py-2">
-                <ListItemIcon>
-                  <AlertCircle className="text-red-500" />
-                </ListItemIcon>
-                <ListItemText
-                  primary={
-                    <span className="text-red-700 font-medium">
-                      {formatCurrency(anomaly.amount)} on {anomaly.category}
-                    </span>
-                  }
-                  secondary={new Date(anomaly.date).toLocaleDateString()}
-                />
-              </ListItem>
-            ))}
-          </List>
-          <Box className="mt-4 p-4 bg-gray-50 rounded">
-            <Typography variant="subtitle2" className="mb-2">
-              Why are these identified as unusual?
-            </Typography>
-            <Typography variant="body2" className="text-gray-600">
-              Transactions may be flagged as unusual if they significantly deviate from your typical spending patterns.
-              Factors include amount, category, timing, or frequency compared to your historical spending.
-            </Typography>
-          </Box>
-        </CardContent>
-      </Card>
+      <AnomalyDetection anomalies={insights.anomalies} />
     ) : (
       <Paper elevation={0} className="p-8 text-center">
         <AlertCircle className="text-green-500 w-12 h-12 mx-auto mb-4" />
@@ -406,89 +755,180 @@ const AIInsights = () => {
           No Anomalies Detected
         </Typography>
         <Typography variant="body1" className="text-gray-600">
-        Your spending patterns appear normal. No unusual transactions were detected.
+          Your spending patterns appear normal. No unusual transactions were detected.
         </Typography>
       </Paper>
     );
   };
 
   const renderSeasonalTab = () => {
-    if (!insights.seasonal_patterns) {
-      return (
-        <Paper elevation={0} className="p-8 text-center">
-          <Calendar className="text-blue-500 w-12 h-12 mx-auto mb-4" />
-          <Typography variant="h6" className="mb-2">
-            Seasonal Analysis Not Available
-          </Typography>
-          <Typography variant="body1" className="text-gray-600">
-            We need at least 12 months of transaction data to perform seasonal analysis. 
-            Continue adding expenses to unlock this feature.
-          </Typography>
-        </Paper>
+    // Debug what we're getting
+    console.log("Rendering seasonal tab with data:", data.seasonal_patterns);
+    
+    // If no seasonal patterns, show a message
+    if (!data.seasonal_patterns || typeof data.seasonal_patterns !== 'object') {
+      
+    
+
+    // Debug log
+    console.log('Rendering with calculated seasonal data:', data.seasonal_patterns);
+return (
+        <Card className="p-6">
+          <CardContent>
+            <Typography variant="h6" className="mb-2">Seasonal Analysis</Typography>
+            <Typography variant="body1">
+              Not enough data available for seasonal analysis. Please ensure you have at least 6 months of transaction data.
+            </Typography>
+          </CardContent>
+        </Card>
       );
     }
-    
+
+    // Safely destructure with defaults for all expected properties
+    const { 
+      month_spending = {}, 
+      category_seasons = {}, 
+      seasonality_strength = 0,
+      year_over_year = { growth: {} }
+    } = data.seasonal_patterns;
+
     return (
-      <Card>
-        <CardContent className="p-6">
-          <Typography variant="h6" className="text-yellow-700 mb-4 flex items-center">
-            <Calendar className="w-5 h-5 mr-2" />
-            Seasonal Spending Patterns
-          </Typography>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <Paper className="p-4 bg-green-50 rounded-lg">
-              <Typography variant="subtitle1" className="text-green-700 mb-2">
-                Highest Spending Month
+      <div className="space-y-6">
+        {/* Overall Seasonality Strength */}
+        <Card className="border-l-4 border-purple-500">
+          <CardContent className="p-6">
+            <Typography variant="h6" className="text-purple-700 mb-3 flex items-center">
+              <Activity className="w-5 h-5 mr-2" />
+              Seasonality Strength
+            </Typography>
+            <div className="flex items-center justify-between">
+              <Typography variant="body1">
+                Your spending patterns show {seasonality_strength > 20 ? 'strong' : 'moderate'} seasonality
               </Typography>
-              <Typography variant="h5" className="font-bold">
-                {new Date(0, insights.seasonal_patterns.highest_spending_month - 1)
-                  .toLocaleString('default', { month: 'long' })}
+              <Chip 
+                label={`${(seasonality_strength || 0).toFixed(1)}%`}
+                color={seasonality_strength > 20 ? 'error' : 'warning'}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Monthly Spending with Confidence Intervals */}
+        {Object.keys(month_spending).length > 0 && (
+          <Card className="border-l-4 border-blue-500">
+            <CardContent className="p-6">
+              <Typography variant="h6" className="text-blue-700 mb-3 flex items-center">
+                <Calendar className="w-5 h-5 mr-2" />
+                Monthly Spending Patterns
               </Typography>
-            </Paper>
-            
-            <Paper className="p-4 bg-blue-50 rounded-lg">
-              <Typography variant="subtitle1" className="text-blue-700 mb-2">
-                Lowest Spending Month
+              <div className="space-y-4">
+                {Object.entries(month_spending).map(([month, data]) => (
+                  <div key={month} className="flex items-center justify-between">
+                    <Typography variant="body1" className="w-24">{month}</Typography>
+                    <div className="flex-1 mx-4">
+                      <div className="relative h-4 bg-gray-200 rounded-full">
+                        <div 
+                          className="absolute h-4 bg-blue-500 rounded-full"
+                          style={{
+                            width: `${Math.min(100, (data.mean / Math.max(...Object.values(month_spending).map(m => m.mean || 0), 0.01)) * 100)}%`
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-right w-48">
+                      <Typography variant="body2" className="text-gray-600">
+                        {formatCurrency(data.mean || 0)} ± {formatCurrency(((data.ci_upper || 0) - (data.ci_lower || 0)) / 2)}
+                      </Typography>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Category-wise Seasonality */}
+        {Object.keys(category_seasons).length > 0 && (
+          <Card className="border-l-4 border-green-500">
+            <CardContent className="p-6">
+              <Typography variant="h6" className="text-green-700 mb-3 flex items-center">
+                <LineChart className="w-5 h-5 mr-2" />
+                Category Seasonality
               </Typography>
-              <Typography variant="h5" className="font-bold">
-                {new Date(0, insights.seasonal_patterns.lowest_spending_month - 1)
-                  .toLocaleString('default', { month: 'long' })}
+              <div className="space-y-4">
+                {Object.entries(category_seasons).map(([category, data]) => (
+                  <div key={category} className="space-y-2">
+                    <Typography variant="subtitle1" className="font-medium">{category}</Typography>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Typography variant="body2" className="text-gray-600">Peak Month</Typography>
+                        <Typography variant="body1">{data.peak_month || 'N/A'}</Typography>
+                      </div>
+                      <div>
+                        <Typography variant="body2" className="text-gray-600">Low Month</Typography>
+                        <Typography variant="body1">{data.low_month || 'N/A'}</Typography>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Typography variant="body2" className="text-gray-600">Seasonality Index:</Typography>
+                      <div className="flex-1">
+                        <div className="relative h-4 bg-gray-200 rounded-full">
+                          {data.seasonality_index && Object.entries(data.seasonality_index).map(([month, index]) => (
+                            <div
+                              key={month}
+                              className="absolute h-4 bg-green-500 rounded-full"
+                              style={{
+                                left: `${((['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].indexOf(month)) * (100 / 12))}%`,
+                                width: `${100 / 12}%`,
+                                opacity: (index || 0) > 100 ? 1 : 0.5
+                              }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Year-over-Year Comparison */}
+        {year_over_year && year_over_year.growth && Object.keys(year_over_year.growth).length > 0 && (
+          <Card className="border-l-4 border-orange-500">
+            <CardContent className="p-6">
+              <Typography variant="h6" className="text-orange-700 mb-3 flex items-center">
+                <TrendingUp className="w-5 h-5 mr-2" />
+                Year-over-Year Growth
               </Typography>
-            </Paper>
-          </div>
-          
-          <Typography variant="subtitle1" className="mb-3">
-            Monthly Spending Patterns
-          </Typography>
-          
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-            {Array.from({length: 12}, (_, i) => i + 1).map(month => {
-              const monthName = new Date(0, month - 1).toLocaleString('default', { month: 'short' });
-              const amount = insights.seasonal_patterns.month_averages[month] || 0;
-              const isHighest = month === insights.seasonal_patterns.highest_spending_month;
-              const isLowest = month === insights.seasonal_patterns.lowest_spending_month;
-              const bgColor = isHighest ? 'bg-red-100' : isLowest ? 'bg-green-100' : 'bg-gray-50';
-              const textColor = isHighest ? 'text-red-700' : isLowest ? 'text-green-700' : '';
-              
-              return (
-                <div key={month} className={`p-2 rounded-lg ${bgColor} text-center`}>
-                  <Typography variant="body2" className="font-medium">
-                    {monthName}
-                  </Typography>
-                  <Typography variant="body2" className={`${textColor} text-sm`}>
-                    {formatCurrency(amount)}
-                  </Typography>
-                </div>
-              );
-            })}
-          </div>
-          
-          <Typography variant="body2" className="mt-6 text-gray-600 italic text-center">
-            Based on your historical spending patterns across different months
-          </Typography>
-        </CardContent>
-      </Card>
+              <div className="space-y-4">
+                {Object.entries(year_over_year.growth).map(([year, growth]) => (
+                  <div key={year} className="flex items-center justify-between">
+                    <Typography variant="body1">{year}</Typography>
+                    <Chip
+                      label={`${growth > 0 ? '+' : ''}${(typeof growth === 'number' ? growth : 0).toFixed(1)}%`}
+                      color={growth > 0 ? 'error' : 'success'}
+                    />
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Show a message if no seasonal data is detected */}
+        {(!Object.keys(month_spending).length && !Object.keys(category_seasons).length && (!year_over_year || !Object.keys(year_over_year.growth).length)) && (
+          <Card className="p-6">
+            <CardContent>
+              <Typography variant="body1" className="text-gray-600">
+                There isn't enough transaction history to provide detailed seasonal analysis. 
+                Continue using the app and adding transactions for more insights.
+              </Typography>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     );
   };
 
@@ -538,6 +978,8 @@ const AIInsights = () => {
             )}
             <Tab label="Anomalies" id="tab-2" aria-controls="tabpanel-2" />
             <Tab label="Seasonal Patterns" id="tab-3" aria-controls="tabpanel-3" />
+            <Tab label="Budget Recommendations" id="tab-4" aria-controls="tabpanel-4" />
+            <Tab label="Smart Categorizer" id="tab-5" aria-controls="tabpanel-5" />
           </Tabs>
         </Box>
         
@@ -557,6 +999,19 @@ const AIInsights = () => {
         
         <div role="tabpanel" hidden={activeTab !== 3} id="tabpanel-3" aria-labelledby="tab-3">
           {activeTab === 3 && renderSeasonalTab()}
+        </div>
+        
+        <div role="tabpanel" hidden={activeTab !== 4} id="tabpanel-4" aria-labelledby="tab-4">
+          {activeTab === 4 && <BudgetRecommendations />}
+        </div>
+        
+        <div role="tabpanel" hidden={activeTab !== 5} id="tabpanel-5" aria-labelledby="tab-5">
+          {activeTab === 5 && (
+            <TransactionCategorizer 
+              userTransactions={data.expenses || []} 
+              onCategorize={handleCategorizedTransactions}
+            />
+          )}
         </div>
       </div>
     </div>

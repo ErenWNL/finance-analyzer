@@ -20,11 +20,12 @@ import {
 } from 'lucide-react';
 import ExpenseManager from './ExpenseManager';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import InfoIcon from '@mui/icons-material/Info';
 import { getFirestore, doc, getDoc, updateDoc } from 'firebase/firestore';
 import Papa from 'papaparse';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
 
 // Constants
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#ff7300'];
@@ -41,6 +42,7 @@ const Dashboard = () => {
   // Hooks
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const db = getFirestore();
 
   // State - Data
@@ -205,8 +207,8 @@ const Dashboard = () => {
             return new Date().toISOString();
           }
         })(),
-        // Ensure other required fields exist
-        category: expense.category || 'Other',
+        // Preserve the original category if it exists and is not empty
+        category: expense.category && expense.category.trim() !== '' ? expense.category : 'Other',
         description: expense.description || '',
         id: expense.id || uuidv4(),
         userId: expense.userId || user.uid
@@ -252,58 +254,64 @@ const Dashboard = () => {
   };
 
   const analyzeExpenses = async (expenseData) => {
+    setError(null);
+    
+    // Add debugging for the expenses data
+    console.log("Starting expense analysis with data:", expenseData);
+    console.log(`Total transactions: ${expenseData.length}`);
+    
+    // Check date distribution
+    if (expenseData.length > 0) {
+      const dateStrings = expenseData.map(exp => exp.date);
+      const sortedDates = [...dateStrings].sort();
+      console.log(`Date range: ${sortedDates[0]} to ${sortedDates[sortedDates.length-1]}`);
+      
+      // Check month distribution
+      const monthCounts = {};
+      dateStrings.forEach(date => {
+        const month = date.substring(0, 7); // YYYY-MM format
+        monthCounts[month] = (monthCounts[month] || 0) + 1;
+      });
+      console.log("Transactions per month:", monthCounts);
+      console.log(`Number of unique months: ${Object.keys(monthCounts).length}`);
+    }
+    
     try {
-      setError(null);
-      
-      // Skip analysis if no data
-      if (!expenseData || expenseData.length === 0) {
-        setAnalysis(null);
-        return;
-      }
-      
-      // Validate and clean all expense data before sending to API
-      const validatedExpenses = expenseData
-        .map(validateExpenseData)
-        .filter(expense => expense !== null);
-      
-      // Skip if no valid expenses after filtering
-      if (validatedExpenses.length === 0) {
-        setAnalysis(null);
-        return;
-      }
+      // Modified authorization approach - using user.uid instead of token
+      const response = await axios.post('/api/analyze', { 
+        expenses: expenseData,
+        userId: user.uid // Pass user ID directly instead of using token
+      });
   
-      try {
-        setLoading(true);
-        const response = await fetch(`${API_BASE_URL}/api/analyze`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            expenses: validatedExpenses,
-            user_id: user.uid
-          }),
-        });
-  
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-          setAnalysis(data.data);
-        } else {
-          console.warn('Analysis returned with error status:', data.message);
-          // Don't show error to user, just log it
-        }
-      } catch (err) {
-        console.error('Analysis API error:', err);
-        // Don't show error to user, just log it
-      } finally {
-        setLoading(false);
+      console.log("Analysis response:", response.data);
+      
+      // Debug the seasonal patterns specifically
+      if (response.data && response.data.ai_insights && response.data.ai_insights.seasonal_patterns) {
+        console.log("Seasonal patterns received:", response.data.ai_insights.seasonal_patterns);
+        console.log("Seasonal patterns type:", typeof response.data.ai_insights.seasonal_patterns);
+        console.log("Is Array?", Array.isArray(response.data.ai_insights.seasonal_patterns));
+      } else {
+        console.log("No seasonal patterns in response:", 
+          response.data && response.data.ai_insights ? 
+          "AI insights exists but no seasonal_patterns" : 
+          "No AI insights in response");
       }
-    } catch (err) {
-      console.error('Analysis processing error:', err);
-      // Don't show error to user, just log it
+      
+      // Pass full data including analyzed data
+      navigate('/ai-insights', { 
+        state: { 
+          data: {
+            ...response.data,
+            expenses: expenseData,
+          }
+        } 
+      });
+    } catch (error) {
+      console.error('Error analyzing expenses:', error);
+      setError(error.message);
     }
   };
+  
   
   const performExploratoryAnalysis = async (expenseData) => {
     try {
@@ -383,16 +391,26 @@ const handleProfileClick = () => {
 };
 
 const handleAIClick = () => {
-  handleMenuClose();
-  if (analysis) {
-    navigate('/ai-insights', { 
-      state: { 
-        data: analysis
-      } 
-    });
-  } else {
-    setError('No analysis data available yet. Please add or import some expenses first.');
+  if (!analysis) {
+    setError("Please analyze your expenses first to view AI insights");
+    return;
   }
+  
+  // Ensure we have the required data structure
+  const insightsData = {
+    ai_insights: analysis.ai_insights || {},
+    transaction_count: expenses.length,
+    spending_insights: analysis.spending_insights || [],
+    spending_velocity: analysis.spending_velocity || {},
+    future_predictions: analysis.future_predictions || [],
+    anomalous_transactions: analysis.anomalous_transactions || [],
+    seasonal_patterns: analysis.seasonal_patterns || [],
+    models_trained: analysis.models_trained || false,
+    expenses: expenses // Pass the full expense array for transaction categorization
+  };
+
+  // Navigate to AI insights with the data
+  navigate('/ai-insights', { state: { data: insightsData } });
 };
 
 const handleFinanceNewsClick = () => {
@@ -612,6 +630,57 @@ const handleExpenseUpdate = async (updatedExpenses) => {
   }
 };
 
+// Add this function to handle updates from the transaction categorizer
+const handleCategorizedTransactions = (categorizedTransactions) => {
+  if (!categorizedTransactions || categorizedTransactions.length === 0) {
+    console.error('No transactions received from AIInsights');
+    return;
+  }
+
+  console.log(`Received ${categorizedTransactions.length} transactions from AIInsights`);
+  
+  // Update the expenses in Firestore
+  const userRef = doc(db, 'users', user.uid);
+  
+  // First validate the transactions to ensure they're properly formatted
+  const validTransactions = categorizedTransactions.map(tx => {
+    return {
+      ...tx,
+      // Ensure required fields are present
+      id: tx.id || uuidv4(),
+      date: tx.date || new Date().toISOString().split('T')[0],
+      amount: parseFloat(tx.amount) || 0,
+      category: tx.category || 'Other',
+      description: tx.description || '',
+      userId: tx.userId || user.uid,
+      updatedAt: new Date().toISOString()
+    };
+  });
+  
+  updateDoc(userRef, {
+    expenses: validTransactions
+  }).then(() => {
+    // Update the expenses in state
+    setExpenses(validTransactions);
+    
+    // Update the filtered expenses
+    const filtered = filterExpensesByMonth(validTransactions, selectedMonth);
+    setFilteredExpenses(filtered);
+    
+    // Update the analysis
+    analyzeExpenses(validTransactions);
+    
+    // Set a success message
+    setSuccess(location.state?.message || 'Transactions successfully categorized');
+    
+    // Clear the location state to avoid duplicate messages
+    window.history.replaceState({}, document.title);
+  }).catch(err => {
+    console.error('Error updating categorized transactions:', err);
+    setError('Failed to update transaction categories');
+  });
+};
+
 // UI Calculations
 const filteredTotalAmount = useMemo(() => {
   return filteredExpenses.reduce((sum, exp) => {
@@ -812,7 +881,7 @@ const ViewSelector = () => (
         Data Insights
       </Button>
     </div>
-  );
+);
   
   // Render transaction cards
   const renderTransactionCards = () => {
@@ -1395,6 +1464,21 @@ const ViewSelector = () => (
     );
   };
 
+  // Add effect to handle returning from AIInsights with categorized transactions
+  useEffect(() => {
+    if (location.state?.categorizedTransactions) {
+      handleCategorizedTransactions(location.state.categorizedTransactions);
+      // Clear location state after handling
+      window.history.replaceState({}, document.title);
+    }
+    
+    if (location.state?.message) {
+      setSuccess(location.state.message);
+      // Clear location state after handling
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
   // Main render
   return (
     <div className="min-h-screen bg-gray-100">
@@ -1439,7 +1523,7 @@ const ViewSelector = () => (
           </ListItemIcon>
           <ListItemText>Profile</ListItemText>
         </MenuItem>
-        <MenuItem onClick={handleAIClick} disabled={!analysis?.ai_insights}>
+        <MenuItem onClick={handleAIClick} disabled={!analysis}>
           <ListItemIcon>
             <BrainCircuit size={18} />
           </ListItemIcon>
