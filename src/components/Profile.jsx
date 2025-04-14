@@ -16,6 +16,7 @@ import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Camera } from 'lucide-react';
 import axios from 'axios';
+import { auth } from '../config/firebase';
 
 const Profile = () => {
   const { user } = useAuth();
@@ -35,78 +36,97 @@ const Profile = () => {
 
   const db = getFirestore();
 
+  // Create axios instance with default config
+  const api = axios.create({
+    baseURL: 'http://localhost:5001',
+    withCredentials: true,
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    }
+  });
+
   useEffect(() => {
     loadProfile();
   }, [user]);
 
   const loadProfile = async () => {
-    if (!user) return;
-
     try {
-      setLoading(true);
-      const docRef = doc(db, 'users', user.uid);
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        // Try to load profile photo from MongoDB
-        try {
-          const response = await axios.get(`http://localhost:5000/api/profile/photo/${user.uid}`, {
-            withCredentials: true,
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json'
-            }
-          });
-          if (response.data.photo) {
-            data.photoURL = `data:image/jpeg;base64,${response.data.photo}`;
-          }
-        } catch (err) {
-          console.error('Error loading profile photo:', err);
-        }
-        
+      const user = auth.currentUser;
+      if (!user) {
+        console.error('No authenticated user found');
+        return;
+      }
+
+      // Get user profile from Firestore
+      const profileDoc = await getDoc(doc(db, 'users', user.uid));
+      if (profileDoc.exists()) {
+        const profileData = profileDoc.data();
         setProfileData(prevData => ({
           ...prevData,
-          ...data
+          ...profileData
         }));
+
+        // Load profile photo from backend
+        try {
+          const token = await user.getIdToken();
+          const response = await api.get(`/api/profile/photo/${user.uid}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (response.data.photo_data) {
+            // Create a data URL from the base64 photo data
+            const photoUrl = `data:${response.data.content_type};base64,${response.data.photo_data}`;
+            setProfileData(prev => ({ ...prev, photoURL: photoUrl }));
+          }
+        } catch (error) {
+          console.error('Error loading profile photo:', error);
+          // Don't throw error here, just log it
+        }
       }
-    } catch (err) {
-      console.error('Error loading profile:', err);
-      setError('Failed to load profile data');
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      setError('Failed to load profile. Please try again.');
     }
   };
 
-  const handlePhotoUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !user) return;
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
     try {
-      setLoading(true);
-      setError('');
-      
+      const user = auth.currentUser;
+      if (!user) {
+        throw new Error('No authenticated user found');
+      }
+
       const formData = new FormData();
       formData.append('photo', file);
-      formData.append('userId', user.uid);
 
-      const response = await axios.post('http://localhost:5000/api/profile/photo', formData, {
-        withCredentials: true,
-        headers: {
-          'Content-Type': 'multipart/form-data'
+      const token = await user.getIdToken();
+      const response = await api.post(
+        `/api/profile/photo`,
+        formData,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+            'Content-Type': 'multipart/form-data'
+          }
         }
-      });
+      );
 
-      if (response.data.photo) {
-        const photoURL = `data:image/jpeg;base64,${response.data.photo}`;
-        setProfileData(prev => ({ ...prev, photoURL }));
+      if (response.data.success) {
+        // Reload the profile to get the updated photo
+        await loadProfile();
         setSuccess('Photo uploaded successfully!');
       }
-    } catch (err) {
-      console.error('Error uploading photo:', err);
+    } catch (error) {
+      console.error('Error uploading photo:', error);
       setError('Failed to upload photo. Please try again.');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -164,7 +184,7 @@ const Profile = () => {
               <Box className="flex justify-center mb-12">
                 <div className="relative">
                   <Avatar
-                    src={profileData.photoURL}
+                    src={profileData.photoURL || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(profileData.displayName || 'User') + '&background=random'}
                     alt={profileData.displayName || 'Profile'}
                     sx={{ 
                       width: 120, 

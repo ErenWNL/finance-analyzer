@@ -34,6 +34,196 @@ import BudgetRecommendations from './BudgetRecommendations';
 import AnomalyDetection from './AnomalyDetection';
 import TransactionCategorizer from './TransactionCategorizer';
 
+// Function to calculate real seasonal patterns using transaction data
+const calculateSeasonalPatterns = (transactions) => {
+  console.log("Calculating real seasonal patterns from", transactions.length, "transactions");
+  
+  // Return default if no transactions
+  if (!transactions || transactions.length < 180) {
+    console.log("Not enough data for seasonal patterns (need 180+ transactions)");
+    return {
+      highest_spending_month: "January",
+      lowest_spending_month: "January",
+      month_spending: {},
+      quarter_spending: {},
+      category_seasons: {},
+      seasonality_strength: 0,
+      year_over_year: { growth: {}, comparison: {} }
+    };
+  }
+  
+  try {
+    // Group transactions by month
+    const monthlyData = {};
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    
+    // Initialize monthly data
+    monthNames.forEach((month, index) => {
+      monthlyData[month] = {
+        transactions: [],
+        amount: 0,
+        count: 0,
+        mean: 0,
+        values: []
+      };
+    });
+    
+    // Group transactions by month
+    transactions.forEach(tx => {
+      if (!tx.date || !tx.amount) return;
+      
+      const date = new Date(tx.date);
+      const monthIndex = date.getMonth();
+      const monthName = monthNames[monthIndex];
+      const amount = parseFloat(tx.amount);
+      
+      if (isNaN(amount)) return;
+      
+      monthlyData[monthName].transactions.push(tx);
+      monthlyData[monthName].amount += amount;
+      monthlyData[monthName].count++;
+      monthlyData[monthName].values.push(amount);
+    });
+    
+    // Log monthly totals
+    console.log("Monthly transaction counts:", Object.entries(monthlyData).map(([month, data]) => ({
+      month,
+      count: data.count,
+      total: data.amount
+    })));
+    
+    // Calculate monthly statistics
+    let highestMonth = monthNames[0];
+    let lowestMonth = monthNames[0];
+    let highestAmount = 0;
+    let lowestAmount = Number.MAX_VALUE;
+    
+    const means = [];
+    
+    monthNames.forEach(month => {
+      const data = monthlyData[month];
+      if (data.count > 0) {
+        data.mean = data.amount / data.count;
+        
+        // Calculate standard deviation
+        const sumSquares = data.values.reduce((sum, val) => sum + Math.pow(val - data.mean, 2), 0);
+        data.std = Math.sqrt(sumSquares / data.count);
+        
+        // Keep track of highest/lowest months
+        if (data.mean > highestAmount) {
+          highestAmount = data.mean;
+          highestMonth = month;
+        }
+        
+        if (data.mean < lowestAmount && data.count > 0) {
+          lowestAmount = data.mean;
+          lowestMonth = month;
+        }
+        
+        means.push(data.mean);
+      }
+    });
+    
+    // Log monthly means
+    console.log("Monthly means:", Object.entries(monthlyData).map(([month, data]) => ({
+      month,
+      mean: data.mean,
+      std: data.std
+    })));
+    
+    // Format the month spending data
+    const monthSpending = {};
+    monthNames.forEach(month => {
+      const data = monthlyData[month];
+      if (data.count > 0) {
+        // Calculate confidence interval
+        const ciMargin = 1.96 * (data.std / Math.sqrt(data.count));
+        
+        monthSpending[month] = {
+          mean: data.mean,
+          ci_lower: data.mean - ciMargin,
+          ci_upper: data.mean + ciMargin,
+          confidence: data.count
+        };
+      } else {
+        monthSpending[month] = {
+          mean: 0,
+          ci_lower: 0,
+          ci_upper: 0,
+          confidence: 0
+        };
+      }
+    });
+    
+    // Calculate seasonality strength
+    const meanOfMeans = means.reduce((sum, val) => sum + val, 0) / means.length;
+    const sumSquaredDiffs = means.reduce((sum, val) => sum + Math.pow(val - meanOfMeans, 2), 0);
+    const stdOfMeans = Math.sqrt(sumSquaredDiffs / means.length);
+    const seasonalityStrength = (stdOfMeans / meanOfMeans) * 100;
+    
+    console.log("Seasonality calculation:", {
+      meanOfMeans,
+      stdOfMeans,
+      seasonalityStrength
+    });
+    
+    // Create quarter data
+    const quarterSpending = {
+      Q1: { mean: 0, trend: 0 },
+      Q2: { mean: 0, trend: 0 },
+      Q3: { mean: 0, trend: 0 },
+      Q4: { mean: 0, trend: 0 }
+    };
+    
+    // Calculate quarterly averages
+    [
+      { quarter: 'Q1', months: ['January', 'February', 'March'] },
+      { quarter: 'Q2', months: ['April', 'May', 'June'] },
+      { quarter: 'Q3', months: ['July', 'August', 'September'] },
+      { quarter: 'Q4', months: ['October', 'November', 'December'] }
+    ].forEach(q => {
+      let sum = 0;
+      let count = 0;
+      
+      q.months.forEach(month => {
+        if (monthlyData[month].count > 0) {
+          sum += monthlyData[month].mean;
+          count++;
+        }
+      });
+      
+      quarterSpending[q.quarter].mean = count > 0 ? sum / count : 0;
+    });
+    
+    console.log("Quarterly spending:", quarterSpending);
+    
+    // Return the full patterns object
+    return {
+      highest_spending_month: highestMonth,
+      lowest_spending_month: lowestMonth,
+      month_spending: monthSpending,
+      quarter_spending: quarterSpending,
+      category_seasons: {}, // Simplified for now
+      seasonality_strength: seasonalityStrength,
+      year_over_year: { growth: {}, comparison: {} } // Simplified
+    };
+  } catch (error) {
+    console.error("Error calculating seasonal patterns:", error);
+    return {
+      highest_spending_month: "January",
+      lowest_spending_month: "January",
+      month_spending: {},
+      quarter_spending: {},
+      category_seasons: {},
+      seasonality_strength: 0,
+      year_over_year: { growth: {}, comparison: {} }
+    };
+  }
+};
+
 const AIInsights = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -45,262 +235,6 @@ const AIInsights = () => {
   // currency formatting
   
   
-  // Function to calculate real seasonal patterns using transaction data
-  const calculateSeasonalPatterns = (transactions) => {
-    console.log("Calculating real seasonal patterns from", transactions.length, "transactions");
-    
-    // Return default if no transactions
-    if (!transactions || transactions.length < 180) {
-      console.log("Not enough data for seasonal patterns (need 180+ transactions)");
-      return {
-        highest_spending_month: "January",
-        lowest_spending_month: "January",
-        month_spending: {},
-        quarter_spending: {},
-        category_seasons: {},
-        seasonality_strength: 0,
-        year_over_year: { growth: {}, comparison: {} }
-      };
-    }
-    
-    try {
-      // Group transactions by month
-      const monthlyData = {};
-      const monthNames = [
-        'January', 'February', 'March', 'April', 'May', 'June',
-        'July', 'August', 'September', 'October', 'November', 'December'
-      ];
-      
-      // Initialize monthly data
-      monthNames.forEach((month, index) => {
-        monthlyData[month] = {
-          transactions: [],
-          amount: 0,
-          count: 0,
-          mean: 0,
-          values: []
-        };
-      });
-      
-      // Group transactions by month
-      transactions.forEach(tx => {
-        if (!tx.date || !tx.amount) return;
-        
-        const date = new Date(tx.date);
-        const monthIndex = date.getMonth();
-        const monthName = monthNames[monthIndex];
-        const amount = parseFloat(tx.amount);
-        
-        if (isNaN(amount)) return;
-        
-        monthlyData[monthName].transactions.push(tx);
-        monthlyData[monthName].amount += amount;
-        monthlyData[monthName].count++;
-        monthlyData[monthName].values.push(amount);
-      });
-      
-      // Calculate monthly statistics
-      let highestMonth = monthNames[0];
-      let lowestMonth = monthNames[0];
-      let highestAmount = 0;
-      let lowestAmount = Number.MAX_VALUE;
-      
-      const means = [];
-      
-      monthNames.forEach(month => {
-        const data = monthlyData[month];
-        if (data.count > 0) {
-          data.mean = data.amount / data.count;
-          
-          // Calculate standard deviation
-          const sumSquares = data.values.reduce((sum, val) => sum + Math.pow(val - data.mean, 2), 0);
-          data.std = Math.sqrt(sumSquares / data.count);
-          
-          // Keep track of highest/lowest months
-          if (data.mean > highestAmount) {
-            highestAmount = data.mean;
-            highestMonth = month;
-          }
-          
-          if (data.mean < lowestAmount && data.count > 0) {
-            lowestAmount = data.mean;
-            lowestMonth = month;
-          }
-          
-          means.push(data.mean);
-        }
-      });
-      
-      // Format the month spending data for the component
-      const monthSpending = {};
-      monthNames.forEach(month => {
-        const data = monthlyData[month];
-        if (data.count > 0) {
-          // Calculate confidence interval
-          const ciMargin = 1.96 * (data.std / Math.sqrt(data.count));
-          
-          monthSpending[month] = {
-            mean: data.mean,
-            ci_lower: data.mean - ciMargin,
-            ci_upper: data.mean + ciMargin,
-            confidence: data.count
-          };
-        } else {
-          monthSpending[month] = {
-            mean: 0,
-            ci_lower: 0,
-            ci_upper: 0,
-            confidence: 0
-          };
-        }
-      });
-      
-      // Calculate seasonality strength
-      if (means.length > 0) {
-        const meanOfMeans = means.reduce((sum, val) => sum + val, 0) / means.length;
-        const sumSquaredDiffs = means.reduce((sum, val) => sum + Math.pow(val - meanOfMeans, 2), 0);
-        const stdOfMeans = Math.sqrt(sumSquaredDiffs / means.length);
-        const seasonalityStrength = (stdOfMeans / meanOfMeans) * 100;
-        
-        // Create quarter data
-        const quarterSpending = {
-          Q1: { mean: 0, trend: 0 },
-          Q2: { mean: 0, trend: 0 },
-          Q3: { mean: 0, trend: 0 },
-          Q4: { mean: 0, trend: 0 }
-        };
-        
-        // Calculate quarterly averages
-        const q1Months = ['January', 'February', 'March'];
-        const q2Months = ['April', 'May', 'June'];
-        const q3Months = ['July', 'August', 'September'];
-        const q4Months = ['October', 'November', 'December'];
-        
-        [
-          { quarter: 'Q1', months: q1Months },
-          { quarter: 'Q2', months: q2Months },
-          { quarter: 'Q3', months: q3Months },
-          { quarter: 'Q4', months: q4Months }
-        ].forEach(q => {
-          let sum = 0;
-          let count = 0;
-          
-          q.months.forEach(month => {
-            if (monthlyData[month].count > 0) {
-              sum += monthlyData[month].mean;
-              count++;
-            }
-          });
-          
-          quarterSpending[q.quarter].mean = count > 0 ? sum / count : 0;
-        });
-        
-        // Create category analysis
-        const categorySeasons = {};
-        const categories = {};
-        
-        // Group by category
-        transactions.forEach(tx => {
-          if (!tx.category) return;
-          
-          if (!categories[tx.category]) {
-            categories[tx.category] = {
-              transactions: [],
-              monthlyData: {}
-            };
-            
-            // Initialize monthly data for category
-            monthNames.forEach(month => {
-              categories[tx.category].monthlyData[month] = {
-                amount: 0,
-                count: 0,
-                mean: 0
-              };
-            });
-          }
-          
-          categories[tx.category].transactions.push(tx);
-          
-          // Group by month
-          if (tx.date) {
-            const date = new Date(tx.date);
-            const monthName = monthNames[date.getMonth()];
-            
-            if (parseFloat(tx.amount)) {
-              categories[tx.category].monthlyData[monthName].amount += parseFloat(tx.amount);
-              categories[tx.category].monthlyData[monthName].count++;
-            }
-          }
-        });
-        
-        // Calculate monthly means for each category
-        Object.keys(categories).forEach(category => {
-          if (categories[category].transactions.length < 20) return;
-          
-          const catData = categories[category];
-          
-          // Calculate monthly means
-          monthNames.forEach(month => {
-            const monthData = catData.monthlyData[month];
-            monthData.mean = monthData.count > 0 ? monthData.amount / monthData.count : 0;
-          });
-          
-          // Find peak and low months
-          let peakMonth = monthNames[0];
-          let lowMonth = monthNames[0];
-          let peakMean = 0;
-          let lowMean = Number.MAX_VALUE;
-          
-          monthNames.forEach(month => {
-            const mean = catData.monthlyData[month].mean;
-            
-            if (mean > peakMean && catData.monthlyData[month].count > 0) {
-              peakMean = mean;
-              peakMonth = month;
-            }
-            
-            if (mean < lowMean && catData.monthlyData[month].count > 0) {
-              lowMean = mean;
-              lowMonth = month;
-            }
-          });
-          
-          categorySeasons[category] = {
-            peak_month: peakMonth,
-            low_month: lowMonth,
-            peak_spending: peakMean,
-            low_spending: lowMean,
-            seasonality_index: {}
-          };
-        });
-        
-        // Return the full patterns object
-        return {
-          highest_spending_month: highestMonth,
-          lowest_spending_month: lowestMonth,
-          month_spending: monthSpending,
-          quarter_spending: quarterSpending,
-          category_seasons: categorySeasons,
-          seasonality_strength: seasonalityStrength,
-          year_over_year: { growth: {}, comparison: {} } // Simplified
-        };
-      }
-    } catch (error) {
-      console.error("Error calculating seasonal patterns:", error);
-    }
-    
-    // Return default on error
-    return {
-      highest_spending_month: "January",
-      lowest_spending_month: "January",
-      month_spending: {},
-      quarter_spending: {},
-      category_seasons: {},
-      seasonality_strength: 0,
-      year_over_year: { growth: {}, comparison: {} }
-    };
-  };
-
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
@@ -333,45 +267,47 @@ const AIInsights = () => {
       console.log('Seasonal patterns received:', location.state.data.seasonal_patterns);
       console.log('Seasonal patterns type:', typeof location.state.data.seasonal_patterns);
       console.log('Is Array?', Array.isArray(location.state.data.seasonal_patterns));
+      console.log('Seasonal patterns keys:', Object.keys(location.state.data.seasonal_patterns || {}));
       
-      // Create default seasonal data generator function
-      const createDefaultSeasonalData = () => {
-        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                            'July', 'August', 'September', 'October', 'November', 'December'];
-        const monthSpending = {};
-        
-        // Create default data for each month
-        monthNames.forEach(month => {
-          monthSpending[month] = {
-            mean: 0.0,
-            ci_lower: 0.0,
-            ci_upper: 0.0,
-            confidence: 0.0
-          };
-        });
-        
-        // Create default quarter data
-        const quarterSpending = {};
-        for (let q = 1; q <= 4; q++) {
-          quarterSpending[`Q${q}`] = {
-            mean: 0.0,
-            trend: 0.0
+      // Create default seasonal data structure
+      const defaultSeasonalData = {
+        highest_spending_month: "January",
+        lowest_spending_month: "January",
+        month_spending: {},
+        quarter_spending: {},
+        category_seasons: {},
+        seasonality_strength: 0,
+        year_over_year: { growth: {}, comparison: {} }
+      };
+      
+      // Helper function to check if seasonal patterns is valid
+      const isValidSeasonalPatterns = (data) => {
+        const isValid = data && 
+               typeof data === 'object' && 
+               !Array.isArray(data) && 
+               Object.keys(data).length > 0;
+        console.log('Is seasonal patterns valid?', isValid);
+        return isValid;
+      };
+      
+      // Convert array to object if needed and ensure all required fields are present
+      let processedSeasonalPatterns = defaultSeasonalData;
+      
+      if (location.state.data.seasonal_patterns) {
+        if (Array.isArray(location.state.data.seasonal_patterns)) {
+          console.log('Converting array to seasonal patterns object');
+          // If it's an array, calculate seasonal patterns from expenses data
+          processedSeasonalPatterns = calculateSeasonalPatterns(location.state.data.expenses || []);
+        } else if (isValidSeasonalPatterns(location.state.data.seasonal_patterns)) {
+          console.log('Merging with default seasonal data');
+          processedSeasonalPatterns = {
+            ...defaultSeasonalData,
+            ...location.state.data.seasonal_patterns
           };
         }
-        
-        return {
-          highest_spending_month: monthNames[0],
-          lowest_spending_month: monthNames[0],
-          month_spending: monthSpending,
-          quarter_spending: quarterSpending,
-          category_seasons: {},
-          seasonality_strength: 0.0,
-          year_over_year: {
-            growth: {},
-            comparison: {}
-          }
-        };
-      };
+      }
+      
+      console.log('Final processed seasonal patterns:', processedSeasonalPatterns);
       
       // Ensure all required fields are present
       const processedData = {
@@ -381,10 +317,14 @@ const AIInsights = () => {
         spending_velocity: location.state.data.spending_velocity || {},
         future_predictions: location.state.data.future_predictions || [],
         anomalous_transactions: location.state.data.anomalous_transactions || [],
-                seasonal_patterns: calculateSeasonalPatterns(location.state.data.expenses || []),
+        seasonal_patterns: processedSeasonalPatterns,
         models_trained: location.state.data.models_trained || false,
         expenses: location.state.data.expenses || [] // Store expenses in data
       };
+      
+      // Debug the processed seasonal patterns
+      console.log('Processed seasonal patterns:', processedData.seasonal_patterns);
+      
       setData(processedData);
       setLoading(false);
     } else {
@@ -767,12 +707,7 @@ const AIInsights = () => {
     
     // If no seasonal patterns, show a message
     if (!data.seasonal_patterns || typeof data.seasonal_patterns !== 'object') {
-      
-    
-
-    // Debug log
-    console.log('Rendering with calculated seasonal data:', data.seasonal_patterns);
-return (
+      return (
         <Card className="p-6">
           <CardContent>
             <Typography variant="h6" className="mb-2">Seasonal Analysis</Typography>
@@ -787,10 +722,14 @@ return (
     // Safely destructure with defaults for all expected properties
     const { 
       month_spending = {}, 
+      quarter_spending = {}, 
       category_seasons = {}, 
       seasonality_strength = 0,
       year_over_year = { growth: {} }
     } = data.seasonal_patterns;
+
+    // Calculate max spending for scaling
+    const maxSpending = Math.max(...Object.values(month_spending).map(m => m.mean || 0), 0.01);
 
     return (
       <div className="space-y-6">
@@ -810,6 +749,19 @@ return (
                 color={seasonality_strength > 20 ? 'error' : 'warning'}
               />
             </div>
+            <Box className="mt-4">
+              <div className="relative h-4 bg-gray-200 rounded-full">
+                <div 
+                  className="absolute h-4 bg-purple-500 rounded-full"
+                  style={{
+                    width: `${Math.min(100, (seasonality_strength / 50) * 100)}%`
+                  }}
+                />
+              </div>
+              <Typography variant="caption" className="text-gray-500 mt-1">
+                Higher values indicate more pronounced seasonal patterns
+              </Typography>
+            </Box>
           </CardContent>
         </Card>
 
@@ -823,22 +775,28 @@ return (
               </Typography>
               <div className="space-y-4">
                 {Object.entries(month_spending).map(([month, data]) => (
-                  <div key={month} className="flex items-center justify-between">
-                    <Typography variant="body1" className="w-24">{month}</Typography>
-                    <div className="flex-1 mx-4">
-                      <div className="relative h-4 bg-gray-200 rounded-full">
-                        <div 
-                          className="absolute h-4 bg-blue-500 rounded-full"
-                          style={{
-                            width: `${Math.min(100, (data.mean / Math.max(...Object.values(month_spending).map(m => m.mean || 0), 0.01)) * 100)}%`
-                          }}
-                        />
+                  <div key={month} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Typography variant="body1" className="w-24">{month}</Typography>
+                      <div className="flex-1 mx-4">
+                        <div className="relative h-4 bg-gray-200 rounded-full">
+                          <div 
+                            className="absolute h-4 bg-blue-500 rounded-full"
+                            style={{
+                              width: `${Math.min(100, (data.mean / maxSpending) * 100)}%`
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-right w-48">
+                        <Typography variant="body2" className="text-gray-600">
+                          {formatCurrency(data.mean || 0)} ± {formatCurrency(((data.ci_upper || 0) - (data.ci_lower || 0)) / 2)}
+                        </Typography>
                       </div>
                     </div>
-                    <div className="text-right w-48">
-                      <Typography variant="body2" className="text-gray-600">
-                        {formatCurrency(data.mean || 0)} ± {formatCurrency(((data.ci_upper || 0) - (data.ci_lower || 0)) / 2)}
-                      </Typography>
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <span>Confidence: {data.confidence} transactions</span>
+                      <span>Range: {formatCurrency(data.ci_lower)} - {formatCurrency(data.ci_upper)}</span>
                     </div>
                   </div>
                 ))}
@@ -847,46 +805,29 @@ return (
           </Card>
         )}
 
-        {/* Category-wise Seasonality */}
-        {Object.keys(category_seasons).length > 0 && (
+        {/* Quarterly Analysis */}
+        {Object.keys(quarter_spending).length > 0 && (
           <Card className="border-l-4 border-green-500">
             <CardContent className="p-6">
               <Typography variant="h6" className="text-green-700 mb-3 flex items-center">
                 <LineChart className="w-5 h-5 mr-2" />
-                Category Seasonality
+                Quarterly Analysis
               </Typography>
-              <div className="space-y-4">
-                {Object.entries(category_seasons).map(([category, data]) => (
-                  <div key={category} className="space-y-2">
-                    <Typography variant="subtitle1" className="font-medium">{category}</Typography>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Typography variant="body2" className="text-gray-600">Peak Month</Typography>
-                        <Typography variant="body1">{data.peak_month || 'N/A'}</Typography>
-                      </div>
-                      <div>
-                        <Typography variant="body2" className="text-gray-600">Low Month</Typography>
-                        <Typography variant="body1">{data.low_month || 'N/A'}</Typography>
-                      </div>
+              <div className="grid grid-cols-2 gap-4">
+                {Object.entries(quarter_spending).map(([quarter, data]) => (
+                  <div key={quarter} className="space-y-2">
+                    <Typography variant="subtitle1" className="font-medium">{quarter}</Typography>
+                    <div className="relative h-4 bg-gray-200 rounded-full">
+                      <div 
+                        className="absolute h-4 bg-green-500 rounded-full"
+                        style={{
+                          width: `${Math.min(100, (data.mean / maxSpending) * 100)}%`
+                        }}
+                      />
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Typography variant="body2" className="text-gray-600">Seasonality Index:</Typography>
-                      <div className="flex-1">
-                        <div className="relative h-4 bg-gray-200 rounded-full">
-                          {data.seasonality_index && Object.entries(data.seasonality_index).map(([month, index]) => (
-                            <div
-                              key={month}
-                              className="absolute h-4 bg-green-500 rounded-full"
-                              style={{
-                                left: `${((['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].indexOf(month)) * (100 / 12))}%`,
-                                width: `${100 / 12}%`,
-                                opacity: (index || 0) > 100 ? 1 : 0.5
-                              }}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
+                    <Typography variant="body2" className="text-gray-600">
+                      Avg: {formatCurrency(data.mean)}
+                    </Typography>
                   </div>
                 ))}
               </div>
@@ -894,40 +835,35 @@ return (
           </Card>
         )}
 
-        {/* Year-over-Year Comparison */}
-        {year_over_year && year_over_year.growth && Object.keys(year_over_year.growth).length > 0 && (
-          <Card className="border-l-4 border-orange-500">
-            <CardContent className="p-6">
-              <Typography variant="h6" className="text-orange-700 mb-3 flex items-center">
-                <TrendingUp className="w-5 h-5 mr-2" />
-                Year-over-Year Growth
-              </Typography>
-              <div className="space-y-4">
-                {Object.entries(year_over_year.growth).map(([year, growth]) => (
-                  <div key={year} className="flex items-center justify-between">
-                    <Typography variant="body1">{year}</Typography>
-                    <Chip
-                      label={`${growth > 0 ? '+' : ''}${(typeof growth === 'number' ? growth : 0).toFixed(1)}%`}
-                      color={growth > 0 ? 'error' : 'success'}
-                    />
-                  </div>
-                ))}
+        {/* Peak and Low Months */}
+        <Card className="border-l-4 border-orange-500">
+          <CardContent className="p-6">
+            <Typography variant="h6" className="text-orange-700 mb-3 flex items-center">
+              <TrendingUp className="w-5 h-5 mr-2" />
+              Peak Spending Analysis
+            </Typography>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Typography variant="subtitle2" className="text-gray-600">Highest Spending Month</Typography>
+                <Typography variant="h5" className="text-red-600">
+                  {data.seasonal_patterns.highest_spending_month}
+                </Typography>
+                <Typography variant="body2" className="text-gray-600">
+                  {formatCurrency(month_spending[data.seasonal_patterns.highest_spending_month]?.mean || 0)}
+                </Typography>
               </div>
-            </CardContent>
-          </Card>
-        )}
-        
-        {/* Show a message if no seasonal data is detected */}
-        {(!Object.keys(month_spending).length && !Object.keys(category_seasons).length && (!year_over_year || !Object.keys(year_over_year.growth).length)) && (
-          <Card className="p-6">
-            <CardContent>
-              <Typography variant="body1" className="text-gray-600">
-                There isn't enough transaction history to provide detailed seasonal analysis. 
-                Continue using the app and adding transactions for more insights.
-              </Typography>
-            </CardContent>
-          </Card>
-        )}
+              <div>
+                <Typography variant="subtitle2" className="text-gray-600">Lowest Spending Month</Typography>
+                <Typography variant="h5" className="text-green-600">
+                  {data.seasonal_patterns.lowest_spending_month}
+                </Typography>
+                <Typography variant="body2" className="text-gray-600">
+                  {formatCurrency(month_spending[data.seasonal_patterns.lowest_spending_month]?.mean || 0)}
+                </Typography>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   };

@@ -9,7 +9,7 @@ import logging
 import joblib
 import numpy as np
 import warnings
-from firebase_admin import credentials, firestore, initialize_app
+from firebase_admin import credentials, firestore, initialize_app, storage
 from sklearn.ensemble import IsolationForest, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
@@ -31,24 +31,24 @@ from transaction_categorizer import TransactionCategorizer
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # Allow OPTIONS requests to pass through without authentication
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+            
         auth_header = request.headers.get('Authorization')
         if not auth_header:
             return jsonify({'error': 'Authorization header is required'}), 401
-            
+
         try:
             # Remove 'Bearer ' prefix if present
-            token = auth_header.split(' ')[1] if ' ' in auth_header else auth_header
+            token = auth_header.replace('Bearer ', '')
             decoded_token = auth.verify_id_token(token)
             request.user_id = decoded_token['uid']
             return f(*args, **kwargs)
-        except auth.InvalidIdTokenError:
-            return jsonify({'error': 'Invalid token'}), 401
-        except auth.ExpiredIdTokenError:
-            return jsonify({'error': 'Token has expired'}), 401
         except Exception as e:
             logger.error(f"Authentication error: {str(e)}")
-            return jsonify({'error': 'Authentication failed'}), 401
-            
+            return jsonify({'error': 'Invalid or expired token'}), 401
+
     return decorated_function
 
 # Suppress warnings
@@ -89,12 +89,26 @@ except Exception as e:
 # Initialize Flask app
 app = Flask(__name__)
 
-# Configure CORS - Simple configuration
-CORS(app, 
-     origins=["http://localhost:5173"],
-     allow_credentials=True,
-     supports_credentials=True,
-     resources={r"/api/*": {"origins": "http://localhost:5173"}})
+# Configure CORS with specific settings
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:5173"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "Accept"],
+        "supports_credentials": True,
+        "max_age": 3600
+    }
+})
+
+# Add after_request handler to ensure CORS headers are set
+@app.after_request
+def after_request(response):
+    response.headers['Access-Control-Allow-Origin'] = 'http://localhost:5173'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
 
 # Initialize MongoDB
 try:
@@ -119,7 +133,9 @@ try:
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
         "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{os.getenv('FIREBASE_CLIENT_EMAIL')}"
     })
-    initialize_app(cred)
+    firebase_app = initialize_app(cred, {
+        'storageBucket': 'finance-analyzer-15afe.appspot.com'
+    })
     firestore_db = firestore.client()
     logger.info("Firebase initialized successfully")
 except Exception as e:
@@ -1382,230 +1398,152 @@ class DataProcessor:
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_finances():
-    """
-    Analyzes expense data and returns financial insights
-    """
     try:
-        logger.info("Received analyze request")
-        data = request.json
-        expenses = data.get('expenses', [])
-        user_id = data.get('user_id')
+        user_id = request.user_id
+        logger.info(f"Analysis request received for user: {user_id}")
         
-        if not expenses:
-            logger.warning("No expense data provided")
-            return jsonify({
-                'status': 'success',
-                'data': {
-                    'total_spent': 0,
-                    'average_expense': 0,
-                    'category_totals': {},
-                    'monthly_totals': {},
-                    'transaction_count': 0,
-                    'categories': []
-                }
-            })
-
-        # Convert to DataFrame
+        # Get user's transactions from Firestore
         try:
-            logger.info(f"Processing {len(expenses)} expense records")
-            df = pd.DataFrame(expenses)
-            logger.debug(f"Created DataFrame with columns: {df.columns}")
-
-            # Validate required columns
-            required_columns = ['date', 'amount', 'category']
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            if missing_columns:
-                logger.error(f"Missing required columns: {missing_columns}")
+            user_ref = firestore_db.collection('users').document(user_id)
+            user_doc = user_ref.get()
+            
+            if not user_doc.exists:
+                logger.warning(f"User document not found for user {user_id}")
                 return jsonify({
-                    'status': 'error',
-                    'message': f'Missing required columns: {missing_columns}'
+                    'error': 'User data not found',
+                    'message': 'Please add some transactions before using this feature'
                 }), 400
-
-            # Data type cleaning and conversion
-            logger.info("Starting data cleaning and conversion")
-            
-            # Clean date column with better error handling
-            try:
-                # First attempt standard conversion
-                df['date'] = pd.to_datetime(df['date'], errors='coerce')
                 
-                # Check for NaT values after conversion
-                invalid_dates = df['date'].isna().sum()
-                if invalid_dates > 0:
-                    logger.warning(f"Found {invalid_dates} invalid dates that couldn't be parsed")
-                    
-                # Drop rows with invalid dates
-                df = df.dropna(subset=['date'])
-                logger.info(f"After date cleaning: {len(df)} valid records")
-            except Exception as e:
-                logger.error(f"Error converting dates: {str(e)}")
+            # Get expenses from user document
+            user_data = user_doc.to_dict()
+            transactions = user_data.get('expenses', [])
+            logger.info(f"Found {len(transactions)} transactions")
+            
+            if not transactions:
+                logger.warning(f"No transaction data for user {user_id}")
                 return jsonify({
-                    'status': 'error',
-                    'message': f'Error processing date values: {str(e)}'
+                    'error': 'No transaction data available',
+                    'message': 'Please add some transactions before using this feature'
                 }), 400
+                
+            # Convert to DataFrame
+            df = pd.DataFrame(transactions)
+            df['date'] = pd.to_datetime(df['date'])
+            logger.info(f"DataFrame created with shape: {df.shape}")
             
-            # Clean amount column
-            try:
-                # First convert to float
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
-                
-                # Check for invalid amounts
-                invalid_amounts = df['amount'].isna().sum()
-                if invalid_amounts > 0:
-                    logger.warning(f"Found {invalid_amounts} invalid amounts")
-                
-                # Apply additional validations (no negative prices, reasonable range)
-                df = df.dropna(subset=['amount'])
-                logger.info(f"After amount cleaning: {len(df)} valid records") 
-            except Exception as e:
-                logger.error(f"Error converting amounts: {str(e)}")
+            # Initialize FinanceAI
+            finance_ai = FinanceAI(user_id)
+            
+            # Analyze spending patterns
+            analysis_result = finance_ai.analyze_spending_patterns(df)
+            
+            if not analysis_result:
+                logger.warning("Analysis returned None")
                 return jsonify({
-                    'status': 'error',
-                    'message': f'Error processing amount values: {str(e)}'
-                }), 400
-            
-            # Handle category if missing
-            if 'category' not in df.columns:
-                df['category'] = 'Other'
-            else:
-                df['category'] = df['category'].fillna('Other')
-                df['category'] = df['category'].astype(str)  # Ensure category is string
-
-            # Final validation check
-            if len(df) == 0:
-                logger.warning("All data was invalid after cleaning")
-                return jsonify({
-                    'status': 'success',
-                    'data': {
-                        'total_spent': 0,
-                        'average_expense': 0,
-                        'category_totals': {},
-                        'monthly_totals': {},
-                        'transaction_count': 0,
-                        'categories': []
-                    }
-                })
-
-            # Display data summary to assist in troubleshooting
-            logger.info(f"Clean data summary - Records: {len(df)}, Date range: {df['date'].min()} to {df['date'].max()}")
-            logger.info(f"Categories: {df['category'].unique().tolist()}")
-            logger.info(f"Amount range: {df['amount'].min()} to {df['amount'].max()}")
-
-            # Perform basic analysis
-            try:
-                analysis_result = {
-                    'total_spent': float(df['amount'].sum()),
-                    'average_expense': float(df['amount'].mean()),
-                    'category_totals': df.groupby('category')['amount'].sum().to_dict(),
-                    'transaction_count': len(df),
-                    'categories': df['category'].unique().tolist()
-                }
-            except Exception as e:
-                logger.error(f"Error in basic analysis: {str(e)}")
-                analysis_result = {
-                    'total_spent': 0,
-                    'average_expense': 0,
-                    'category_totals': {},
-                    'transaction_count': 0,
-                    'categories': []
-                }
-            
-            # Calculate monthly totals safely
-            try:
-                monthly_totals = df.groupby(df['date'].dt.strftime('%Y-%m'))['amount'].sum()
-                analysis_result['monthly_totals'] = {k: float(v) for k, v in monthly_totals.to_dict().items()}
-            except Exception as e:
-                logger.error(f"Error calculating monthly totals: {str(e)}")
-                analysis_result['monthly_totals'] = {}
-
-            # Add AI analysis if possible
-            try:
-                logger.info("Starting AI analysis...")
-                finance_ai = FinanceAI(user_id)
-                ai_analysis = finance_ai.analyze_spending_patterns(df)
+                    'error': 'Analysis failed',
+                    'message': 'Could not analyze spending patterns'
+                }), 500
                 
-                if ai_analysis:
-                    logger.info("AI analysis completed successfully")
-                    # Sanitize AI analysis results for Firebase storage
-                    def sanitize_for_firebase(item):
-                        if isinstance(item, (np.int64, np.int32, np.int16, np.int8,
-                                            np.uint64, np.uint32, np.uint16, np.uint8)):
-                            return int(item)
-                        elif isinstance(item, (np.float64, np.float32, np.float16)):
-                            return float(item)
-                        elif isinstance(item, (np.ndarray,)):
-                            return sanitize_for_firebase(item.tolist())
-                        elif isinstance(item, dict):
-                            return {k: sanitize_for_firebase(v) for k, v in item.items()}
-                        elif isinstance(item, list):
-                            return [sanitize_for_firebase(i) for i in item]
-                        else:
-                            return item
-                    
-                    def ensure_string_keys(data):
-                        """Convert all dict keys to strings to ensure Firebase compatibility"""
-                        if isinstance(data, dict):
-                            return {str(k): ensure_string_keys(v) for k, v in data.items()}
-                        elif isinstance(data, list):
-                            return [ensure_string_keys(item) for item in data]
-                        else:
-                            return data
-    
-                    sanitized_analysis = {}
-                    for key, value in ai_analysis.items():
-                        sanitized_analysis[key] = sanitize_for_firebase(value)
-            
-                    # Ensure all keys are strings for Firebase
-                    sanitized_analysis = ensure_string_keys(sanitized_analysis)
-            
-                    analysis_result['ai_insights'] = sanitized_analysis
+            # Sanitize results for Firebase
+            def sanitize_for_firebase(item):
+                if isinstance(item, (np.int64, np.int32, np.int16, np.int8,
+                                    np.uint64, np.uint32, np.uint16, np.uint8)):
+                    return int(item)
+                elif isinstance(item, (np.float64, np.float32, np.float16)):
+                    return float(item)
+                elif isinstance(item, (np.ndarray,)):
+                    return sanitize_for_firebase(item.tolist())
+                elif isinstance(item, dict):
+                    return {k: sanitize_for_firebase(v) for k, v in item.items()}
+                elif isinstance(item, list):
+                    return [sanitize_for_firebase(i) for i in item]
                 else:
-                    logger.warning("AI analysis returned None")
-                    analysis_result['ai_insights'] = {
-                        "message": "AI analysis could not be completed with current data",
-                        "requirements": {
-                            "min_transactions": 30,
-                            "recommended_transactions": 100,
-                            "min_date_range_days": 30
-                        }
+                    return item
+            
+            # Ensure all keys are strings for Firebase
+            def ensure_string_keys(data):
+                if isinstance(data, dict):
+                    return {str(k): ensure_string_keys(v) for k, v in data.items()}
+                elif isinstance(data, list):
+                    return [ensure_string_keys(item) for item in data]
+                else:
+                    return data
+            
+            # Extract seasonal patterns if they exist
+            seasonal_patterns = analysis_result.get('seasonal_patterns', {})
+            
+            # Log the seasonal patterns data for debugging
+            logger.info(f"Raw seasonal patterns: {seasonal_patterns}")
+            logger.info(f"Seasonal patterns type: {type(seasonal_patterns)}")
+            
+            # Only create default structure if we truly have no data
+            if not seasonal_patterns or (isinstance(seasonal_patterns, list) and len(seasonal_patterns) == 0):
+                logger.warning("No seasonal patterns data available, creating default structure")
+                # Create empty structure with default values
+                month_names = ['January', 'February', 'March', 'April', 'May', 'June', 
+                              'July', 'August', 'September', 'October', 'November', 'December']
+                
+                # Default month spending data
+                month_spending = {}
+                for month in month_names:
+                    month_spending[month] = {
+                        'mean': 0.0,
+                        'ci_lower': 0.0,
+                        'ci_upper': 0.0,
+                        'confidence': 0.0
                     }
                 
-            except Exception as e:
-                logger.error(f"Error in AI analysis: {str(e)}", exc_info=True)
-                analysis_result['ai_insights'] = {
-                    "error": str(e),
-                    "message": "Error occurred during AI analysis"
+                # Basic structure for seasonal patterns
+                seasonal_patterns = {
+                    'highest_spending_month': month_names[0],
+                    'lowest_spending_month': month_names[0],
+                    'month_spending': month_spending,
+                    'quarter_spending': {f'Q{q}': {'mean': 0.0, 'trend': 0.0} for q in range(1, 5)},
+                    'category_seasons': {},
+                    'seasonality_strength': 0.0,
+                    'year_over_year': {
+                        'growth': {},
+                        'comparison': {}
+                    }
                 }
-
-            # Store in Firebase if user_id is provided
-            try:
-                if user_id:
-                    doc_ref = firestore_db.collection('users').document(user_id)
-                    doc_ref.set({
-                        'last_updated': firestore.SERVER_TIMESTAMP,
-                        'latest_analysis': analysis_result
-                    }, merge=True)
-            except Exception as e:
-                logger.error(f"Error storing analysis in Firebase: {str(e)}")
-                # Continue even if Firebase storage fails
-
+            else:
+                logger.info("Using actual seasonal patterns data")
+            
+            # Create the final response structure
+            response_data = {
+                'seasonal_patterns': ensure_string_keys(sanitize_for_firebase(seasonal_patterns)),
+                'total_spent': float(analysis_result.get('total_spent', 0)),
+                'average_expense': float(analysis_result.get('average_expense', 0)),
+                'std_expense': float(analysis_result.get('std_expense', 0)),
+                'category_insights': ensure_string_keys(sanitize_for_firebase(analysis_result.get('category_insights', []))),
+                'monthly_trends': ensure_string_keys(sanitize_for_firebase(analysis_result.get('monthly_trends', []))),
+                'anomalies': ensure_string_keys(sanitize_for_firebase(analysis_result.get('anomalies', []))),
+                'transaction_count': int(analysis_result.get('transaction_count', 0))
+            }
+            
+            # Store in Firebase
+            user_ref.set({
+                'last_updated': firestore.SERVER_TIMESTAMP,
+                'latest_analysis': response_data
+            }, merge=True)
+            
             return jsonify({
                 'status': 'success',
-                'data': analysis_result
+                'data': response_data
             })
-
+            
         except Exception as e:
-            logger.error(f"Error processing DataFrame: {str(e)}", exc_info=True)
+            logger.error(f"Error processing transactions: {str(e)}", exc_info=True)
             return jsonify({
                 'status': 'error',
-                'message': f'Error processing expense data: {str(e)}'
+                'message': f'Error processing transactions: {str(e)}'
             }), 500
-
+            
     except Exception as e:
-        logger.error(f"General error in analyze_finances: {str(e)}", exc_info=True)
+        logger.error(f"Error in analyze_finances: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': f'Server error: {str(e)}'
+            'message': f'Error analyzing finances: {str(e)}'
         }), 500
 
 @app.route('/api/exploratory', methods=['POST'])
@@ -1743,55 +1681,92 @@ def health_check():
     })
 
 @app.route('/api/profile/photo', methods=['POST', 'OPTIONS'])
+@require_auth
 def upload_profile_photo():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     try:
-        user_id = request.form.get('userId')
+        user_id = request.user_id
         if not user_id:
-            return jsonify({'error': 'User ID is required'}), 400
+            return jsonify({'error': 'User ID not found'}), 400
 
         if 'photo' not in request.files:
-            return jsonify({'error': 'No photo provided'}), 400
+            return jsonify({'error': 'No photo file provided'}), 400
 
         photo = request.files['photo']
-        if photo.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
+        if not photo.filename:
+            return jsonify({'error': 'No photo file selected'}), 400
 
-        # Convert image to base64
-        img = Image.open(photo)
-        buffered = BytesIO()
-        img.save(buffered, format="JPEG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
+        try:
+            # Convert photo to base64
+            photo_data = base64.b64encode(photo.read()).decode('utf-8')
+            
+            # Store in MongoDB
+            profile_photos = mongo_db.profile_photos
+            profile_photos.update_one(
+                {'user_id': user_id},
+                {
+                    '$set': {
+                        'photo_data': photo_data,
+                        'content_type': photo.content_type,
+                        'last_updated': datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+            
+            # Update user document in Firestore with photo reference
+            user_ref = firestore_db.collection('users').document(user_id)
+            user_ref.set({
+                'has_profile_photo': True,
+                'last_updated': firestore.SERVER_TIMESTAMP
+            }, merge=True)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Profile photo uploaded successfully'
+            }), 200
+            
+        except Exception as storage_error:
+            logger.error(f"Error storing profile photo: {str(storage_error)}")
+            return jsonify({'error': 'Failed to store photo'}), 500
 
-        # Store in MongoDB
-        photo_data = {
-            'userId': user_id,
-            'photo': img_str,
-            'uploadedAt': datetime.utcnow()
-        }
-        
-        # Update or insert the photo
-        mongo_db.profile_photos.update_one(
-            {'userId': user_id},
-            {'$set': photo_data},
-            upsert=True
-        )
-
-        return jsonify({'message': 'Photo uploaded successfully', 'photo': img_str}), 200
     except Exception as e:
-        logger.error(f"Error uploading photo: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error uploading profile photo: {str(e)}")
+        return jsonify({'error': 'Failed to upload photo'}), 500
 
 @app.route('/api/profile/photo/<user_id>', methods=['GET', 'OPTIONS'])
+@require_auth
 def get_profile_photo(user_id):
-    try:
-        photo_data = mongo_db.profile_photos.find_one({'userId': user_id})
-        if not photo_data:
-            return jsonify({'error': 'Photo not found'}), 404
+    if request.method == 'OPTIONS':
+        return '', 200
         
-        return jsonify({'photo': photo_data['photo']}), 200
+    try:
+        # Verify the requesting user has access to this photo
+        if request.user_id != user_id:
+            return jsonify({'error': 'Unauthorized access'}), 403
+
+        # Get photo from MongoDB
+        profile_photos = mongo_db.profile_photos
+        photo_doc = profile_photos.find_one({'user_id': user_id})
+        
+        if not photo_doc:
+            return jsonify({
+                'photo_url': 'https://via.placeholder.com/150?text=No+Photo'
+            }), 200
+            
+        # Return the base64 encoded photo
+        return jsonify({
+            'photo_data': photo_doc['photo_data'],
+            'content_type': photo_doc['content_type']
+        }), 200
+
     except Exception as e:
-        logger.error(f"Error retrieving photo: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error retrieving profile photo: {str(e)}")
+        return jsonify({
+            'photo_url': 'https://via.placeholder.com/150?text=No+Photo'
+        }), 200
 
 @app.route('/api/auth/forgot-password', methods=['POST'])
 def forgot_password():
